@@ -1,31 +1,38 @@
 // ============================================================================
-// STORY ARC LIGHT (SAL) — CONTEXT TAB — v1.2.0
+// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.0
+// Paste this entire file into the Context tab.
 // ============================================================================
 
 globalThis.stop ??= false;
+const sal = SAL_state();
 
 if (SAL_isBusy()) {
+  // SAL owns this private planning call.
   if (state.InnerSelf) state.InnerSelf.agent = "";
-  text = onContext_SAE(text);
+  sal.innerSelfTaskActive = false;
+  text = SAL_generationContext(text);
 } else {
-  const contextBeforeInnerSelf = text;
-  let innerSelfTask = false;
+  const beforeInnerSelf = text;
+  let innerTask = false;
 
   if (SAL_hasInnerSelf()) {
     InnerSelf("context");
-    innerSelfTask = SAL_hasInnerSelfTask();
+    innerTask = SAL_hasInnerSelfTask();
 
-    if (state.SAL?.realPlayerInputThisTurn === true && innerSelfTask) {
+    // Never let a private Inner Self task consume an explicit player action.
+    if (sal.realPlayerInputThisTurn && innerTask) {
       if (state.InnerSelf) state.InnerSelf.agent = "";
       globalThis.stop = false;
-      text = contextBeforeInnerSelf;
-      innerSelfTask = false;
+      text = beforeInnerSelf;
+      innerTask = false;
     }
   }
 
-  if (globalThis.stop !== true && !innerSelfTask) {
-    SAL_softenStoredArc();
-    text = onContext_SAE(text);
+  sal.innerSelfTaskActive = innerTask;
+
+  // Arc guidance belongs only in an ordinary narrative model call.
+  if (globalThis.stop !== true && !innerTask) {
+    text = SAL_injectArc(text);
   }
 }
 
