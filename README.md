@@ -1,92 +1,98 @@
-# SAL — Story Arc Light for AI Dungeon
+# Inner Self + SAL — AI Dungeon Combined Script
 
-**SAL (Story Arc Light)** is a standalone AI Dungeon script for keeping long stories moving without forcing the player down a predetermined path.
+This repository provides a **copy-and-paste-ready combined version of Inner Self + Story Arc Light (SAL)** for AI Dungeon, plus a separate **SAL-only** folder for anyone who wants Story Arc Light by itself.
 
-SAL generates a lightweight set of future possibilities, feeds them back to the AI as optional guidance, and always gives the player's newest explicit choice priority.
+The combined version is the main package in `src/`. Each file is complete for its matching AI Dungeon scripting tab—no manual merging is needed.
 
-## Features
+## Included scripts and authors
 
-- Fully standalone — **Story Arc Engine is no longer required**.
-- Generates exactly **8 flexible future possibilities**.
-- Player actions override/defer a pending SAL planning turn instead of being consumed by it.
-- Stored arc beats are treated as optional guidance, not destiny.
-- Default refresh: every **35 story turns**.
-- Removes one older beat every **5 turns** to let the arc naturally progress.
-- Creates editable `/SAL Settings` and `/Current Story Arc` Story Cards.
-- `/sal` or `/sal status` shows current SAL status.
-- `/redo arc` forces a fresh arc.
-- `/stop` cancels a pending SAL generation.
-- Optional compatibility with **Inner Self** when both Library codes are used together.
+- **Inner Self v1.0.2 — LewdLeah**  
+  Gives characters an internal life with memory, goals, secrets, planning, self-reflection, and other persistent character behavior.  
+  Original project: https://github.com/LewdLeah/Inner-Self
 
-## Install
+- **Story Arc Light (SAL) v1.3.0 — SeanL33316**  
+  Adds light long-term story direction through flexible future possibilities while keeping the player's newest explicit choice as the highest priority.  
+  Project: https://github.com/SeanL33316/SAL-AI-Dungeon
 
-Open the `src` folder. Each file is the **complete code for that AI Dungeon scripting tab**.
+- **Auto-Cards v1.1.3 — LewdLeah**  
+  Included inside the official Inner Self Library and available through Inner Self's configuration.
+
+## Main package: Inner Self + SAL
+
+Use the files in `src/`:
+
+```text
+src/
+├── library.js
+├── input.js
+├── context.js
+└── output.js
+```
+
+These four files are already combined and coordinated for **Inner Self + SAL**.
+
+### Install
 
 1. Copy all of `src/library.js` into AI Dungeon's **Library** tab.
 2. Copy all of `src/input.js` into the **Input** tab.
 3. Copy all of `src/context.js` into the **Context** tab.
 4. Copy all of `src/output.js` into the **Output** tab.
-5. Save the scripts and make sure Scripts are enabled in AI Dungeon.
+5. Save and make sure **Scripts** are enabled.
 
-You do **not** need to download, merge, or paste Story Arc Engine first.
+Replace the contents of those tabs rather than adding a second set of modifier wrappers.
 
-AI Dungeon currently requires the non-Library scripts to end with `modifier(text)`, and the supplied files already include the complete modifier wrappers.
+## SAL-only package
 
-## Using SAL with Inner Self
-
-Inner Self is optional:
-
-https://github.com/LewdLeah/Inner-Self
-
-To combine them:
-
-1. Put the complete **Inner Self Library** code in the Library tab.
-2. Paste the complete **SAL `library.js`** underneath it.
-3. Use SAL's complete `input.js`, `context.js`, and `output.js` files as the hook tabs.
-
-SAL automatically detects `InnerSelf()` and coordinates private model calls so the two systems do not intentionally compete for the same output. A real player action still gets priority.
-
-## Story Cards
-
-SAL automatically creates two system Story Cards:
-
-- `/SAL Settings` — editable settings such as refresh frequency.
-- `/Current Story Arc` — the current flexible arc. You can manually edit it if you want.
-
-Default settings:
+If you want **Story Arc Light without Inner Self**, use the separate `SAL-only/` folder:
 
 ```text
-enabled = true
-turnsPerAICall = 35
-turnsPerElemRemoval = 5
-attemptLimit = 3
+SAL-only/
+├── library.js
+├── input.js
+├── context.js
+└── output.js
 ```
 
-## Commands
+Copy each file into the matching AI Dungeon scripting tab exactly the same way.
 
-```text
-/sal
-/sal status
-/redo arc
-/stop
-```
+## What Story Arc Light does
 
-## Player-first behavior
+SAL is designed to give long-running stories direction without turning the outline into destiny.
 
-When SAL is ready to refresh its arc, it normally uses the next Continue-style turn for its private planning call.
+- Generates exactly **8 short, flexible future possibilities**.
+- The player's newest explicit action always outranks the stored arc.
+- A pending SAL planning turn is deferred when the player enters a real action instead of consuming that action.
+- Planned beats can be delayed, changed, replaced, or discarded as the story changes.
+- Default arc refresh is every **35 story turns**.
+- Removes one older beat every **5 turns** so the arc can naturally move forward.
+- Creates editable `/SAL Settings` and `/Current Story Arc` Story Cards.
+- Coordinates its private planning turns with Inner Self in the combined package.
 
-If the player types a real action instead, SAL defers that planning call and allows the player's action to receive the normal story response. The arc refresh can happen later.
+### SAL commands
 
-The generated arc also explicitly tells the AI that beats may be delayed, changed, replaced, or discarded whenever the player's choices make them no longer fit.
+- `/sal` or `/sal status` — show SAL status and the current Story Arc.
+- `/redo arc` — request a fresh Story Arc.
+- `/stop` — cancel a pending SAL generation.
 
 ## Credits
 
-**SAL / Story Arc Light:** SeanL33316
+### Inner Self
+Created by **LewdLeah**. The combined package uses the official Inner Self source from:
 
-SAL began as an experiment in making long-form story-arc guidance lighter and more player-driven. The original Story Arc Engine by Yi1i1i was an inspiration for exploring this kind of AI Dungeon story planning, but SAL v1.3.0 is a standalone implementation and does not include or require SAE source code.
+https://github.com/LewdLeah/Inner-Self
 
-SAL is not an official Latitude/AI Dungeon project and is not affiliated with Latitude.
+### Auto-Cards
+Created by **LewdLeah** and included as part of the official Inner Self Library source.
+
+### Story Arc Light
+Created by **SeanL33316**.
+
+SAL is designed as a lighter, player-first story-direction system for AI Dungeon stories that benefit from long-term progression without rigid railroading.
 
 ## License
 
-MIT License. See `LICENSE`.
+SAL-authored code is released under the MIT License in `LICENSE`.
+
+Inner Self and the Inner Self copy of Auto-Cards remain credited to **LewdLeah** and are redistributed under the upstream MIT License preserved in `LICENSE-INNER-SELF`.
+
+This project is not an official Latitude / AI Dungeon project and is not affiliated with Latitude.
