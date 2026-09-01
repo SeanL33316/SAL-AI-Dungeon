@@ -57,17 +57,38 @@ SAL-only/
 
 Copy each file into the matching AI Dungeon scripting tab exactly the same way.
 
-## What Story Arc Light does
+## How Story Arc Light works
 
-SAL is designed to give long-running stories direction without turning the outline into destiny.
+SAL gives a long-running story direction without treating an outline as a fixed script.
+
+1. **SAL watches the story normally.** It keeps track of story turns while the player continues playing.
+2. **When an arc refresh is due, SAL schedules a private planning turn.** The default refresh interval is every **35 story turns**.
+3. **The planning turn asks the AI for exactly 8 short future possibilities.** These are broad possibilities based on established characters, places, goals, tensions, mysteries, consequences, and unresolved threads.
+4. **The result is stored in the `Current Story Arc` Story Card.** This lets the user inspect or manually edit the current possibilities.
+5. **The current arc is added to later story context as optional guidance.** It helps the AI remember possible directions without forcing them to happen.
+6. **Player input always wins.** If the player chooses something that conflicts with an arc idea, SAL tells the AI to delay, change, replace, or discard that idea instead of overriding the player.
+7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player's action is processed normally first; SAL can refresh later on a Continue-like turn.
+8. **The arc gradually moves forward.** By default SAL removes one older possibility every **5 turns**, preventing the list from becoming a permanent checklist.
+9. **SAL eventually creates a fresh set of possibilities.** This keeps long stories moving while allowing the plot to evolve naturally.
+
+The goal is not to predict exactly what must happen. SAL gives the AI a handful of possible directions so the story can develop over time without rushing or railroading the player.
+
+### Story Cards
+
+SAL creates two editable Story Cards:
+
+- `SAL Settings` — contains adjustable SAL settings.
+- `Current Story Arc` — contains the current optional story possibilities.
+
+Older adventures that used `/SAL Settings` or `/Current Story Arc` are migrated to the names above.
+
+### Default behavior
 
 - Generates exactly **8 short, flexible future possibilities**.
+- Refreshes the arc every **35 story turns** by default.
+- Removes one older possibility every **5 turns** by default.
 - The player's newest explicit action always outranks the stored arc.
-- A pending SAL planning turn is deferred when the player enters a real action instead of consuming that action.
 - Planned beats can be delayed, changed, replaced, or discarded as the story changes.
-- Default arc refresh is every **35 story turns**.
-- Removes one older beat every **5 turns** so the arc can naturally move forward.
-- Creates editable `SAL Settings` and `Current Story Arc` Story Cards.
 - Coordinates its private planning turns with Inner Self in the combined package.
 
 ### SAL commands
