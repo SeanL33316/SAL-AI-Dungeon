@@ -17,79 +17,76 @@ jobs:
           fetch-depth: 0
 
       - name: Rebuild combined package
-        shell: python
+        shell: bash
         run: |
+          set -euo pipefail
+          python3 - <<'PY'
           from pathlib import Path
 
           src = Path('src')
           sal = Path('SAL-only')
 
-          # Keep the complete existing Inner Self library, but remove the old
-          # combined header that incorrectly said SAL lived in the hook files.
           current = (src / 'library.js').read_text()
           marker = '// Your "Library" tab should look like this'
-          if marker in current:
-              inner = current[current.index(marker):]
-          else:
-              inner = current
-
+          inner = current[current.index(marker):] if marker in current else current
           sal_lib = (sal / 'library.js').read_text()
 
-          header = '''// ============================================================================
-// INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
-// ============================================================================
-// Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.1
-//
-// Structure follows the proven scenario build:
-//   Library = all core code
-//   Input / Context / Output = short coordination hooks only
-// ============================================================================
-
-'''
+          header = (
+              '// ============================================================================\n'
+              '// INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY\n'
+              '// ============================================================================\n'
+              '// Inner Self v1.0.2 — LewdLeah\n'
+              '// Story Arc Light (SAL) v1.3.1\n'
+              '//\n'
+              '// Structure follows the proven scenario build:\n'
+              '//   Library = all core code\n'
+              '//   Input / Context / Output = short coordination hooks only\n'
+              '// ============================================================================\n\n'
+          )
 
           (src / 'library.js').write_text(header + inner.rstrip() + '\n\n' + sal_lib)
 
           hook_headers = {
-              'input.js': '''// ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON INPUT
-// Short coordination hook based on the proven scenario structure.
-// ============================================================================
-
-''',
-              'context.js': '''// ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON CONTEXT
-// Short coordination hook based on the proven scenario structure.
-// ============================================================================
-
-''',
-              'output.js': '''// ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON OUTPUT
-// Short coordination hook based on the proven scenario structure.
-// ============================================================================
-
-'''
+              'input.js': (
+                  '// ============================================================================\n'
+                  '// INNER SELF + SAL — COMBINED AI DUNGEON INPUT\n'
+                  '// Short coordination hook based on the proven scenario structure.\n'
+                  '// ============================================================================\n\n'
+              ),
+              'context.js': (
+                  '// ============================================================================\n'
+                  '// INNER SELF + SAL — COMBINED AI DUNGEON CONTEXT\n'
+                  '// Short coordination hook based on the proven scenario structure.\n'
+                  '// ============================================================================\n\n'
+              ),
+              'output.js': (
+                  '// ============================================================================\n'
+                  '// INNER SELF + SAL — COMBINED AI DUNGEON OUTPUT\n'
+                  '// Short coordination hook based on the proven scenario structure.\n'
+                  '// ============================================================================\n\n'
+              ),
           }
 
-          for name, h in hook_headers.items():
+          for name, hook_header in hook_headers.items():
               body = (sal / name).read_text()
-              # Remove the SAL-only banner while keeping the actual working hook.
               lines = body.splitlines()
               cut = 0
               while cut < len(lines) and (not lines[cut].strip() or lines[cut].lstrip().startswith('//')):
                   cut += 1
               body = '\n'.join(lines[cut:]).lstrip() + '\n'
-              (src / name).write_text(h + body)
+              (src / name).write_text(hook_header + body)
 
-          # Keep README wording accurate and mention the compact hook structure.
           p = Path('README.md')
           readme = p.read_text()
           old = 'These four files are already combined and coordinated for **Inner Self + SAL**.'
-          new = ('These four files are already combined and coordinated for **Inner Self + SAL**. '
-                 'The Library contains the core code once, while Input, Context, and Output are short coordination hooks.')
+          new = (
+              'These four files are already combined and coordinated for **Inner Self + SAL**. '
+              'The Library contains the core code once, while Input, Context, and Output are short coordination hooks.'
+          )
           if old in readme:
               readme = readme.replace(old, new)
           p.write_text(readme)
+          PY
 
       - name: Verify JavaScript and compact hooks
         shell: bash
