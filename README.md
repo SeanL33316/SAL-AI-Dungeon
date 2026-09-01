@@ -17,7 +17,7 @@ The combined version is the main package in `src/`. Each file is complete for it
   The original story-arc system that Story Arc Light was developed from.  
   Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Light (SAL) v1.3.0** is the lighter, player-first story-arc version used in this repository.
+**Story Arc Light (SAL) v1.3.1** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -67,7 +67,7 @@ SAL is designed to give long-running stories direction without turning the outli
 - Planned beats can be delayed, changed, replaced, or discarded as the story changes.
 - Default arc refresh is every **35 story turns**.
 - Removes one older beat every **5 turns** so the arc can naturally move forward.
-- Creates editable `/SAL Settings` and `/Current Story Arc` Story Cards.
+- Creates editable `SAL Settings` and `Current Story Arc` Story Cards.
 - Coordinates its private planning turns with Inner Self in the combined package.
 
 ### SAL commands

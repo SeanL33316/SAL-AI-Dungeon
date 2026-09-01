@@ -4,7 +4,7 @@
 // Included scripts:
 //   Inner Self v1.0.2 — LewdLeah
 //   Auto-Cards v1.1.3 — LewdLeah (included with Inner Self)
-//   Story Arc Light (SAL) v1.3.0 — SeanL33316
+//   Story Arc Light (SAL) v1.3.1 — SeanL33316
 //
 // This Library tab contains the full official Inner Self library. SAL's core is
 // embedded in each combined Input / Context / Output file so all four tabs are
