@@ -1,56 +1,43 @@
 // ============================================================================
-// STORY ARC LIGHT (SAL) — v1.2.0
-// Player-first story direction for AI Dungeon
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.0
+// ============================================================================
+// Standalone player-first story direction for AI Dungeon.
+// Paste this entire file into the Library tab.
 //
-// Install AFTER the current Story Arc Engine (SAE) Library code.
-// Inner Self support is automatic when Inner Self is also installed.
-//
-// SAL project: https://github.com/SeanL33316/SAL-AI-Dungeon
-// Story Arc Engine dependency: https://github.com/Yi1i1i/Story-Arc-Engine
-// Optional Inner Self: https://github.com/LewdLeah/Inner-Self
+// Optional compatibility: Inner Self by LewdLeah.
+// If Inner Self's Library is also present above this code, SAL's Input/Context/
+// Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.2.0";
-const SAL_PRESET_VERSION = 4;
+const SAL_VERSION = "1.3.0";
+const SAL_SETTINGS_KEYS = "/SAL Settings";
+const SAL_ARC_KEYS = "/Current Story Arc";
+const SAL_CARD_TYPE = "SAL System";
 
-function SAL_hasInnerSelf() {
-  return typeof globalThis.InnerSelf === "function";
+function SAL_state() {
+  state.SAL = state.SAL || {};
+  const s = state.SAL;
+
+  if (typeof s.enabled !== "boolean") s.enabled = true;
+  if (!Number.isFinite(s.turn)) s.turn = 0;
+  if (!Number.isFinite(s.turnsPerAICall)) s.turnsPerAICall = 35;
+  if (!Number.isFinite(s.turnsPerElemRemoval)) s.turnsPerElemRemoval = 5;
+  if (!Number.isFinite(s.attemptLimit)) s.attemptLimit = 3;
+  if (!Number.isFinite(s.attempt)) s.attempt = 0;
+  if (typeof s.arc !== "string") s.arc = "";
+  if (typeof s.pendingGeneration !== "boolean") s.pendingGeneration = false;
+  if (typeof s.captureGeneration !== "boolean") s.captureGeneration = false;
+  if (typeof s.deferred !== "boolean") s.deferred = false;
+  if (typeof s.realPlayerInputThisTurn !== "boolean") s.realPlayerInputThisTurn = false;
+  if (typeof s.innerSelfTaskActive !== "boolean") s.innerSelfTaskActive = false;
+  if (typeof s.showStatus !== "boolean") s.showStatus = false;
+  if (typeof s.pendingMessage !== "string") s.pendingMessage = "";
+  if (typeof s.prompt !== "string" || !s.prompt.trim()) s.prompt = SAL_defaultPrompt();
+  s.version = SAL_VERSION;
+  return s;
 }
 
-function SAL_isBusy() {
-  return (
-    state.stop_SAE !== true &&
-    (state.saveOutput === true || state.unlockFeedAIPrompt === true)
-  );
-}
-
-function SAL_hasInnerSelfTask() {
-  return Boolean(
-    state.InnerSelf &&
-    typeof state.InnerSelf.agent === "string" &&
-    state.InnerSelf.agent.trim().length > 0
-  );
-}
-
-function SAL_isCommand(value) {
-  const t = String(value || "").trim().toLowerCase();
-  return (
-    t === "/redo arc" ||
-    t === "/help sae" ||
-    t === "/stop" ||
-    t === "/sal" ||
-    t === "/sal status"
-  );
-}
-
-function SAL_isRealPlayerInput(value) {
-  const t = String(value || "").trim();
-  if (!t) return false;
-  if (SAL_isCommand(t)) return false;
-  return true;
-}
-
-function SAL_defaultArcPrompt() {
+function SAL_defaultPrompt() {
   return `
 <<
 <SYSTEM>
@@ -74,7 +61,7 @@ STORY ARC LIGHT:
 - Keep developments broad, flexible, and easy to alter.
 - Build mainly from established characters, places, consequences, goals,
   tensions, mysteries, and unresolved threads in the actual story.
-- Respect the story's established genre, setting, tone, scale, and continuity.
+- Respect the established genre, setting, tone, scale, and continuity.
 - Prefer opportunities, reactions, and consequences over predetermined outcomes.
 - Mix major developments with ordinary life or quieter beats when appropriate.
 - Let NPCs have independent motives, priorities, and lives.
@@ -86,61 +73,236 @@ STORY ARC LIGHT:
 Output the numbered list only.
 </SYSTEM>
 >>
-  `;
+  `.trim();
 }
 
-function SAL_writeSettingsCard() {
+function SAL_hasInnerSelf() {
+  return typeof globalThis.InnerSelf === "function";
+}
+
+function SAL_hasInnerSelfTask() {
+  return Boolean(
+    state.InnerSelf &&
+    typeof state.InnerSelf.agent === "string" &&
+    state.InnerSelf.agent.trim().length > 0
+  );
+}
+
+function SAL_isBusy() {
+  const s = SAL_state();
+  return s.enabled && (s.pendingGeneration || s.captureGeneration);
+}
+
+function SAL_isCommand(value) {
+  const t = String(value || "").trim().toLowerCase();
+  return [
+    "/sal",
+    "/sal status",
+    "/sal help",
+    "/redo arc",
+    "/stop"
+  ].includes(t);
+}
+
+function SAL_isRealPlayerInput(value) {
+  const t = String(value || "").trim();
+  if (!t) return false;
+  if (SAL_isCommand(t)) return false;
+  return true;
+}
+
+function SAL_findCardIndex(keys) {
+  if (!Array.isArray(storyCards)) return -1;
+  const wanted = String(keys || "").trim().toLowerCase();
+  return storyCards.findIndex(card => {
+    if (!card) return false;
+    const cardKeys = Array.isArray(card.keys) ? card.keys.join(",") : String(card.keys || "");
+    return cardKeys.trim().toLowerCase() === wanted;
+  });
+}
+
+function SAL_getCard(keys) {
+  const index = SAL_findCardIndex(keys);
+  return index >= 0 ? storyCards[index] : null;
+}
+
+function SAL_ensureCard(keys, entry) {
+  let index = SAL_findCardIndex(keys);
+  if (index >= 0) return index;
   try {
-    if (typeof storeSettingsToSC === "function") {
-      storeSettingsToSC();
+    const added = addStoryCard(keys, entry, SAL_CARD_TYPE);
+    if (added !== false) return added;
+  } catch (error) {
+    log("SAL addStoryCard failed: " + error);
+  }
+  return SAL_findCardIndex(keys);
+}
+
+function SAL_updateCard(keys, entry) {
+  const index = SAL_ensureCard(keys, entry);
+  if (index < 0) return false;
+  try {
+    updateStoryCard(index, keys, entry, SAL_CARD_TYPE);
+    return true;
+  } catch (error) {
+    // Older sandboxes may allow direct mutation even when updateStoryCard fails.
+    try {
+      storyCards[index].keys = keys;
+      storyCards[index].entry = entry;
+      storyCards[index].type = SAL_CARD_TYPE;
+      return true;
+    } catch (_) {
+      log("SAL updateStoryCard failed: " + error);
+      return false;
     }
-  } catch (_) {}
+  }
 }
 
-function SAL_applyPreset() {
-  state.SAL = state.SAL || {};
-  state.SAL.version = SAL_VERSION;
-
-  if (state.SAL.presetVersion === SAL_PRESET_VERSION) return;
-
-  state.stop_SAE = false;
-  state.turnsPerAICall = 35;
-  state.turnsPerElemRemoval = 5;
-  state.attemptLimit = 3;
-  state.arcPrompt = [SAL_defaultArcPrompt()];
-
-  state.SAL.deferred = false;
-  state.SAL.presetVersion = SAL_PRESET_VERSION;
-
-  SAL_writeSettingsCard();
+function SAL_settingsText() {
+  const s = SAL_state();
+  return [
+    "SAL — Story Arc Light Settings",
+    "",
+    "enabled = " + s.enabled,
+    "turnsPerAICall = " + s.turnsPerAICall,
+    "turnsPerElemRemoval = " + s.turnsPerElemRemoval,
+    "attemptLimit = " + s.attemptLimit,
+    "",
+    "Commands:",
+    "/sal or /sal status — show SAL status",
+    "/redo arc — generate a new arc on this turn",
+    "/stop — cancel a pending arc generation",
+    "",
+    "The player's newest explicit choice always outranks the Story Arc."
+  ].join("\n");
 }
 
-SAL_applyPreset();
+function SAL_parseSettings(entry) {
+  const s = SAL_state();
+  const text = String(entry || "");
+  let match;
+
+  match = text.match(/enabled\s*=\s*(true|false)/i);
+  if (match) s.enabled = match[1].toLowerCase() === "true";
+
+  match = text.match(/turnsPerAICall\s*=\s*(\d+)/i);
+  if (match) s.turnsPerAICall = Math.max(5, Math.min(500, Number(match[1])));
+
+  match = text.match(/turnsPerElemRemoval\s*=\s*(\d+)/i);
+  if (match) s.turnsPerElemRemoval = Math.max(0, Math.min(100, Number(match[1])));
+
+  match = text.match(/attemptLimit\s*=\s*(\d+)/i);
+  if (match) s.attemptLimit = Math.max(1, Math.min(10, Number(match[1])));
+}
+
+function SAL_syncCards() {
+  const s = SAL_state();
+
+  const settingsIndex = SAL_ensureCard(SAL_SETTINGS_KEYS, SAL_settingsText());
+  if (settingsIndex >= 0) {
+    SAL_parseSettings(storyCards[settingsIndex]?.entry);
+  }
+
+  const arcIndex = SAL_ensureCard(SAL_ARC_KEYS, s.arc);
+  if (arcIndex >= 0) {
+    const cardArc = String(storyCards[arcIndex]?.entry || "").trim();
+    // Respect manual user edits to the Current Story Arc card.
+    if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
+  }
+}
+
+function SAL_saveSettings() {
+  SAL_updateCard(SAL_SETTINGS_KEYS, SAL_settingsText());
+}
+
+function SAL_saveArc() {
+  const s = SAL_state();
+  SAL_updateCard(SAL_ARC_KEYS, s.arc || "");
+}
+
+function SAL_softArcText(numbered) {
+  const clean = String(numbered || "").trim();
+  if (!clean) return "";
+  return [
+    "OPTIONAL STORY ARC LIGHT POSSIBILITIES:",
+    "The player's newest explicit input has absolute priority over every item below.",
+    "Respond to the player's current action first.",
+    "Never force, assume, or manufacture a player decision just to advance a beat.",
+    "Delay, alter, replace, or discard any beat that conflicts with what the player does.",
+    clean
+  ].join("\n");
+}
+
+function SAL_extractNumberedArc(text) {
+  const lines = String(text || "").split("\n");
+  const items = [];
+
+  for (const raw of lines) {
+    const match = raw.trim().match(/^(\d+)\.\s+(.+)/);
+    if (!match) continue;
+    const body = match[2].trim();
+    if (!body) continue;
+    items.push(body);
+  }
+
+  // SAL deliberately requires exactly eight usable items.
+  if (items.length < 8) return "";
+  return items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n");
+}
+
+function SAL_removeFirstArcItem() {
+  const s = SAL_state();
+  if (!s.arc.trim()) return;
+
+  const numbered = s.arc
+    .split("\n")
+    .filter(line => /^\s*\d+\.\s+/.test(line))
+    .map(line => line.replace(/^\s*\d+\.\s+/, "").trim())
+    .filter(Boolean);
+
+  if (!numbered.length) return;
+  numbered.shift();
+
+  s.arc = numbered.length
+    ? SAL_softArcText(numbered.map((item, index) => `${index + 1}. ${item}`).join("\n"))
+    : "";
+
+  SAL_saveArc();
+}
+
+function SAL_scheduleIfDue() {
+  const s = SAL_state();
+  if (!s.enabled || SAL_isBusy()) return false;
+
+  const due = s.turn === 1 || (s.turnsPerAICall > 0 && s.turn % s.turnsPerAICall === 0);
+  if (!due) return false;
+
+  s.pendingGeneration = true;
+  s.captureGeneration = true;
+  s.attempt = 0;
+  return true;
+}
 
 function SAL_protectPlayerInput(inputText) {
-  state.SAL = state.SAL || {};
+  const s = SAL_state();
   const realInput = SAL_isRealPlayerInput(inputText);
-  state.SAL.realPlayerInputThisTurn = realInput;
+  s.realPlayerInputThisTurn = realInput;
+  s.innerSelfTaskActive = false;
 
   if (!realInput) {
-    if (
-      state.SAL.deferred === true &&
-      state.stop_SAE !== true &&
-      state.saveOutput !== true &&
-      state.unlockFeedAIPrompt !== true
-    ) {
-      state.unlockFeedAIPrompt = true;
-      state.saveOutput = true;
-      state.SAL.deferred = false;
+    if (s.deferred && s.enabled && !SAL_isBusy()) {
+      s.pendingGeneration = true;
+      s.captureGeneration = true;
+      s.deferred = false;
     }
     return;
   }
 
   if (SAL_isBusy()) {
-    state.unlockFeedAIPrompt = false;
-    state.saveOutput = false;
-    state.attemptCounter = 0;
-    state.SAL.deferred = true;
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.attempt = 0;
+    s.deferred = true;
   }
 
   if (SAL_hasInnerSelfTask()) {
@@ -148,59 +310,139 @@ function SAL_protectPlayerInput(inputText) {
   }
 }
 
-function SAL_softenStoredArc() {
-  if (typeof state.storyArc !== "string" || !state.storyArc.trim()) return;
-
-  const numbered = state.storyArc
-    .split("\n")
-    .filter(line => /^\s*\d+\.\s+/.test(line))
-    .join("\n")
-    .trim();
-
-  if (!numbered) return;
-
-  state.storyArc =
-`OPTIONAL STORY ARC LIGHT POSSIBILITIES:
-The player's newest explicit input has absolute priority over every item below.
-Respond to the player's current action first.
-Never force, assume, or manufacture a player decision just to advance a beat.
-Delay, alter, replace, or discard any beat that conflicts with what the player does.
-${numbered}`;
-
-  try {
-    if (typeof storeArcToSC === "function") storeArcToSC();
-  } catch (_) {}
-}
-
 function SAL_inputCommands(inputText) {
+  const s = SAL_state();
   const t = String(inputText || "").trim().toLowerCase();
 
-  if (t === "/sal" || t === "/sal status") {
-    state.SAL = state.SAL || {};
-    state.SAL.showStatus = true;
+  if (t === "/sal" || t === "/sal status" || t === "/sal help") {
+    s.showStatus = true;
     return " ";
+  }
+
+  if (t === "/redo arc") {
+    if (!s.enabled) {
+      s.pendingMessage = "SAL is disabled. Set enabled = true in /SAL Settings.";
+      return " ";
+    }
+    s.pendingGeneration = true;
+    s.captureGeneration = true;
+    s.deferred = false;
+    s.attempt = 0;
+    return " ";
+  }
+
+  if (t === "/stop") {
+    if (SAL_isBusy() || s.deferred) {
+      s.pendingGeneration = false;
+      s.captureGeneration = false;
+      s.deferred = false;
+      s.attempt = 0;
+      s.pendingMessage = "Story Arc Light generation stopped.";
+      return " ";
+    }
   }
 
   return inputText;
 }
 
-function SAL_outputCommands(outputText) {
-  state.SAL = state.SAL || {};
-  if (state.SAL.showStatus !== true) return outputText;
-
-  state.SAL.showStatus = false;
-
-  const busy = SAL_isBusy() ? "yes" : "no";
-  const deferred = state.SAL.deferred === true ? "yes" : "no";
-  const turn = Number.isFinite(state.turnNum_SAE) ? state.turnNum_SAE : "?";
-
-  return (
-    "Story Arc Light " + SAL_VERSION + " status\n" +
-    "Enabled: " + (state.stop_SAE === true ? "no" : "yes") + "\n" +
-    "Turn: " + turn + "\n" +
-    "Private arc call pending: " + busy + "\n" +
-    "Refresh deferred for player input: " + deferred + "\n" +
-    "Inner Self detected: " + (SAL_hasInnerSelf() ? "yes" : "no") + "\n\n" +
-    (state.storyArc || "No Story Arc has been generated yet.")
-  );
+function SAL_generationContext(baseText) {
+  const s = SAL_state();
+  s.pendingGeneration = false;
+  s.captureGeneration = true;
+  return String(baseText || "") + "\n\n" + s.prompt;
 }
+
+function SAL_injectArc(baseText) {
+  const s = SAL_state();
+  if (!s.enabled || !s.arc.trim()) return baseText;
+
+  const guidance = [
+    "<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>",
+    s.arc,
+    "<<END STORY ARC LIGHT>>"
+  ].join("\n");
+
+  return String(baseText || "") + "\n\n" + guidance;
+}
+
+function SAL_processGeneratedOutput(outputText) {
+  const s = SAL_state();
+  const numbered = SAL_extractNumberedArc(outputText);
+
+  if (numbered) {
+    s.arc = SAL_softArcText(numbered);
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.attempt = 0;
+    s.deferred = false;
+    SAL_saveArc();
+    return "<< ✅ Story Arc Light updated and saved. Click 'Continue'. >>";
+  }
+
+  if (s.attempt < s.attemptLimit) {
+    s.attempt += 1;
+    s.pendingGeneration = true;
+    s.captureGeneration = true;
+    return `<< ⏳ Story Arc Light retry ${s.attempt}/${s.attemptLimit}. Click 'Continue' or type '/stop'. >>`;
+  }
+
+  s.pendingGeneration = false;
+  s.captureGeneration = false;
+  s.attempt = 0;
+  return "<< 🧱 Story Arc Light could not build a valid arc. Keeping the current arc. Type '/redo arc' to retry. >>";
+}
+
+function SAL_onNormalOutput(outputText) {
+  const s = SAL_state();
+  s.turn += 1;
+
+  if (
+    s.turnsPerElemRemoval > 0 &&
+    s.turn >= 5 &&
+    s.turn % s.turnsPerElemRemoval === 0
+  ) {
+    SAL_removeFirstArcItem();
+  }
+
+  const scheduled = SAL_scheduleIfDue();
+  s.realPlayerInputThisTurn = false;
+  s.innerSelfTaskActive = false;
+  SAL_saveSettings();
+
+  if (scheduled) {
+    return String(outputText || "") +
+      "\n\n<< ⚠️ Story Arc Light will update next turn. Click 'Continue', or keep playing and SAL will defer the update. >>";
+  }
+
+  return outputText;
+}
+
+function SAL_outputCommands(outputText) {
+  const s = SAL_state();
+
+  if (s.pendingMessage) {
+    const message = s.pendingMessage;
+    s.pendingMessage = "";
+    return message;
+  }
+
+  if (!s.showStatus) return outputText;
+  s.showStatus = false;
+
+  return [
+    `Story Arc Light ${SAL_VERSION}`,
+    `Enabled: ${s.enabled ? "yes" : "no"}`,
+    `Story turns: ${s.turn}`,
+    `Refresh every: ${s.turnsPerAICall} turns`,
+    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,
+    `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,
+    `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,
+    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,
+    "",
+    s.arc || "No Story Arc has been generated yet."
+  ].join("\n");
+}
+
+// Initialize and synchronize editable Story Cards on every hook.
+SAL_state();
+SAL_syncCards();
