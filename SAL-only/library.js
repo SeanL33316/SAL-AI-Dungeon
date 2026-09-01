@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.0
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.1
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,9 +9,11 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.0";
-const SAL_SETTINGS_KEYS = "/SAL Settings";
-const SAL_ARC_KEYS = "/Current Story Arc";
+const SAL_VERSION = "1.3.1";
+const SAL_SETTINGS_KEYS = "SAL Settings";
+const SAL_ARC_KEYS = "Current Story Arc";
+const SAL_LEGACY_SETTINGS_KEYS = "/SAL Settings";
+const SAL_LEGACY_ARC_KEYS = "/Current Story Arc";
 const SAL_CARD_TYPE = "SAL System";
 
 function SAL_state() {
@@ -158,6 +160,32 @@ function SAL_updateCard(keys, entry) {
   }
 }
 
+function SAL_migrateLegacyCard(oldKeys, newKeys) {
+  const oldIndex = SAL_findCardIndex(oldKeys);
+  if (oldIndex < 0 || SAL_findCardIndex(newKeys) >= 0) return;
+
+  const card = storyCards[oldIndex];
+  const entry = String(card?.entry || "");
+  const type = card?.type || SAL_CARD_TYPE;
+
+  try {
+    updateStoryCard(oldIndex, newKeys, entry, type);
+  } catch (_) {
+    try {
+      storyCards[oldIndex].keys = newKeys;
+      storyCards[oldIndex].entry = entry;
+      storyCards[oldIndex].type = type;
+    } catch (error) {
+      log("SAL legacy Story Card migration failed: " + error);
+    }
+  }
+}
+
+function SAL_migrateLegacyCards() {
+  SAL_migrateLegacyCard(SAL_LEGACY_SETTINGS_KEYS, SAL_SETTINGS_KEYS);
+  SAL_migrateLegacyCard(SAL_LEGACY_ARC_KEYS, SAL_ARC_KEYS);
+}
+
 function SAL_settingsText() {
   const s = SAL_state();
   return [
@@ -197,6 +225,7 @@ function SAL_parseSettings(entry) {
 
 function SAL_syncCards() {
   const s = SAL_state();
+  SAL_migrateLegacyCards();
 
   const settingsIndex = SAL_ensureCard(SAL_SETTINGS_KEYS, SAL_settingsText());
   if (settingsIndex >= 0) {
@@ -321,7 +350,7 @@ function SAL_inputCommands(inputText) {
 
   if (t === "/redo arc") {
     if (!s.enabled) {
-      s.pendingMessage = "SAL is disabled. Set enabled = true in /SAL Settings.";
+      s.pendingMessage = "SAL is disabled. Set enabled = true in the SAL Settings Story Card.";
       return " ";
     }
     s.pendingGeneration = true;
