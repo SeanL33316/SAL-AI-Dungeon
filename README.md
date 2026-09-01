@@ -1,96 +1,92 @@
-# SAL — Story Arc Light
+# SAL — Story Arc Light for AI Dungeon
 
-**Story Arc Light (SAL)** is a player-first story direction script for AI Dungeon.
+**SAL (Story Arc Light)** is a standalone AI Dungeon script for keeping long stories moving without forcing the player down a predetermined path.
 
-SAL is designed for long-running stories that need future direction without forcing the player down a predetermined path. It uses **Story Arc Engine (SAE)** as its planning backend, then makes the generated arc lighter, more flexible, and subordinate to the player's newest choice.
+SAL generates a lightweight set of future possibilities, feeds them back to the AI as optional guidance, and always gives the player's newest explicit choice priority.
 
 ## Features
 
-- Generates 8 short, flexible future story possibilities.
-- The player's newest explicit input always has priority over the planned arc.
-- A pending arc-generation turn is deferred if the player enters a real action.
-- Planned beats can be delayed, changed, replaced, or discarded when they no longer fit.
-- Default arc refresh: every 35 story turns.
-- Old arc items gradually clear every 5 turns.
-- `/sal` or `/sal status` shows the current SAL status and stored arc.
-- Optional automatic compatibility with **Inner Self**.
+- Fully standalone — **Story Arc Engine is no longer required**.
+- Generates exactly **8 flexible future possibilities**.
+- Player actions override/defer a pending SAL planning turn instead of being consumed by it.
+- Stored arc beats are treated as optional guidance, not destiny.
+- Default refresh: every **35 story turns**.
+- Removes one older beat every **5 turns** to let the arc naturally progress.
+- Creates editable `/SAL Settings` and `/Current Story Arc` Story Cards.
+- `/sal` or `/sal status` shows current SAL status.
+- `/redo arc` forces a fresh arc.
+- `/stop` cancels a pending SAL generation.
+- Optional compatibility with **Inner Self** when both Library codes are used together.
 
-## Source Files
+## Install
 
-```text
-src/
-├── library.js
-├── input.js
-├── context.js
-└── output.js
-```
+Open the `src` folder. Each file is the **complete code for that AI Dungeon scripting tab**.
 
-Each file corresponds to the matching AI Dungeon scripting tab.
+1. Copy all of `src/library.js` into AI Dungeon's **Library** tab.
+2. Copy all of `src/input.js` into the **Input** tab.
+3. Copy all of `src/context.js` into the **Context** tab.
+4. Copy all of `src/output.js` into the **Output** tab.
+5. Save the scripts and make sure Scripts are enabled in AI Dungeon.
 
-## Requirement — Story Arc Engine
+You do **not** need to download, merge, or paste Story Arc Engine first.
 
-SAL currently uses **Story Arc Engine by Yi1i1i** as its underlying arc-generation engine:
+AI Dungeon currently requires the non-Library scripts to end with `modifier(text)`, and the supplied files already include the complete modifier wrappers.
 
-https://github.com/Yi1i1i/Story-Arc-Engine
+## Using SAL with Inner Self
 
-The original Story Arc Engine repository does not currently include a software license file, so its source code is not copied into this repository. Install SAE from the original repository first.
-
-## Installation — SAL + SAE
-
-1. Install the current Story Arc Engine scripts from the original SAE repository.
-2. In AI Dungeon's **Library** tab, keep the SAE Library code and paste SAL's `src/library.js` **after it**.
-3. Replace the **Input** tab with SAL's `src/input.js`.
-4. Replace the **Context** tab with SAL's `src/context.js`.
-5. Replace the **Output** tab with SAL's `src/output.js`.
-6. Save the scripts and make sure scripting is enabled.
-
-Library order:
-
-```text
-Story Arc Engine Library
-SAL library.js
-```
-
-## Installation — SAL + SAE + Inner Self
-
-Inner Self is optional. If you use it, install **Inner Self by LewdLeah** from:
+Inner Self is optional:
 
 https://github.com/LewdLeah/Inner-Self
 
-Use this Library order:
+To combine them:
+
+1. Put the complete **Inner Self Library** code in the Library tab.
+2. Paste the complete **SAL `library.js`** underneath it.
+3. Use SAL's complete `input.js`, `context.js`, and `output.js` files as the hook tabs.
+
+SAL automatically detects `InnerSelf()` and coordinates private model calls so the two systems do not intentionally compete for the same output. A real player action still gets priority.
+
+## Story Cards
+
+SAL automatically creates two system Story Cards:
+
+- `/SAL Settings` — editable settings such as refresh frequency.
+- `/Current Story Arc` — the current flexible arc. You can manually edit it if you want.
+
+Default settings:
 
 ```text
-Inner Self library.js
-Story Arc Engine Library
-SAL library.js
+enabled = true
+turnsPerAICall = 35
+turnsPerElemRemoval = 5
+attemptLimit = 3
 ```
-
-Then use SAL's `input.js`, `context.js`, and `output.js` as the single hook scripts. SAL coordinates the systems so a SAL private planning call and an Inner Self private NPC call do not intentionally compete for the same AI response.
 
 ## Commands
 
-- `/sal` — show SAL status.
-- `/sal status` — show SAL status.
-- `/redo arc` — request a new arc through SAE.
-- `/help sae` — show SAE help.
-- `/stop` — stop a pending SAE/SAL arc-generation call.
+```text
+/sal
+/sal status
+/redo arc
+/stop
+```
 
-## Player Priority
+## Player-first behavior
 
-When an arc refresh is waiting to use the next AI call and the player enters a real action instead, SAL defers the planning call. The player's action receives the normal story response first.
+When SAL is ready to refresh its arc, it normally uses the next Continue-style turn for its private planning call.
 
-The planned arc is also stored as **optional guidance**, not destiny. The AI is instructed to adapt or discard planned beats whenever the player's actual choices move the story in a different direction.
+If the player types a real action instead, SAL defers that planning call and allows the player's action to receive the normal story response. The arc refresh can happen later.
+
+The generated arc also explicitly tells the AI that beats may be delayed, changed, replaced, or discarded whenever the player's choices make them no longer fit.
 
 ## Credits
 
-**SAL / Story Arc Light:** SeanL33316  
-**Story Arc Engine:** Yi1i1i  
-**Inner Self:** LewdLeah
+**SAL / Story Arc Light:** SeanL33316
 
-SAL is not an official Latitude or AI Dungeon project.
+SAL began as an experiment in making long-form story-arc guidance lighter and more player-driven. The original Story Arc Engine by Yi1i1i was an inspiration for exploring this kind of AI Dungeon story planning, but SAL v1.3.0 is a standalone implementation and does not include or require SAE source code.
+
+SAL is not an official Latitude/AI Dungeon project and is not affiliated with Latitude.
 
 ## License
 
-SAL-authored source code in this repository is released under the MIT License. See `LICENSE`.
-
-Third-party projects retain their own copyright and licensing terms.
+MIT License. See `LICENSE`.
