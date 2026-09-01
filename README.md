@@ -31,7 +31,7 @@ src/
 └── output.js
 ```
 
-These four files are already combined and coordinated for **Inner Self + SAL**.
+These four files are already combined and coordinated for **Inner Self + SAL**. The Library contains the core code once, while Input, Context, and Output are short coordination hooks.
 
 ### Install
 
