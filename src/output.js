@@ -1,35 +1,28 @@
 // ============================================================================
-// STORY ARC LIGHT (SAL) — OUTPUT TAB — v1.2.0
+// SAL — STORY ARC LIGHT — AI DUNGEON OUTPUT — v1.3.0
+// Paste this entire file into the Output tab.
 // ============================================================================
 
-const salOwnsThisOutput = SAL_isBusy();
+const sal = SAL_state();
 
-if (salOwnsThisOutput) {
+if (sal.captureGeneration) {
+  // This model output is SAL's private eight-beat planning response.
   if (state.InnerSelf) state.InnerSelf.agent = "";
-  text = onOutput_SAE(text);
-  SAL_softenStoredArc();
+  text = SAL_processGeneratedOutput(text);
+} else if (SAL_hasInnerSelf() && sal.innerSelfTaskActive) {
+  // Let Inner Self consume/hide its own private brain-operation output.
+  InnerSelf("output");
+  sal.innerSelfTaskActive = false;
+  sal.realPlayerInputThisTurn = false;
 } else {
-  if (SAL_hasInnerSelf()) {
-    const innerSelfTaskBeforeOutput = SAL_hasInnerSelfTask();
-    InnerSelf("output");
-
-    if (!innerSelfTaskBeforeOutput) {
-      text = onOutput_SAE(text);
-      SAL_softenStoredArc();
-    }
-  } else {
-    text = onOutput_SAE(text);
-    SAL_softenStoredArc();
-  }
+  if (SAL_hasInnerSelf()) InnerSelf("output");
+  text = SAL_onNormalOutput(text);
 }
 
 text = SAL_outputCommands(text);
-state.SAL = state.SAL || {};
-state.SAL.realPlayerInputThisTurn = false;
 
-if (typeof text !== "string" || text.length === 0) {
-  text = "\u200B";
-}
+// AI Dungeon throws an error if Output returns an empty string.
+if (typeof text !== "string" || text.length === 0) text = "\u200B";
 
 const modifier = (text) => {
   return { text };
