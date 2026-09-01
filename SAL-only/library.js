@@ -1,16 +1,8 @@
 // ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON CONTEXT
-// ============================================================================
-// Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.0 — SeanL33316
-// Copy this entire file into the matching AI Dungeon scripting tab.
-// ============================================================================
-
-// ============================================================================
 // SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.0
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
-// SAL core embedded in this combined modifier.
+// Paste this entire file into the Library tab.
 //
 // Optional compatibility: Inner Self by LewdLeah.
 // If Inner Self's Library is also present above this code, SAL's Input/Context/
@@ -454,50 +446,3 @@ function SAL_outputCommands(outputText) {
 // Initialize and synchronize editable Story Cards on every hook.
 SAL_state();
 SAL_syncCards();
-
-// ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.0
-// Paste this entire file into the Context tab.
-// ============================================================================
-
-globalThis.stop ??= false;
-const sal = SAL_state();
-
-if (SAL_isBusy()) {
-  // SAL owns this private planning call.
-  if (state.InnerSelf) state.InnerSelf.agent = "";
-  sal.innerSelfTaskActive = false;
-  text = SAL_generationContext(text);
-} else {
-  const beforeInnerSelf = text;
-  let innerTask = false;
-
-  if (SAL_hasInnerSelf()) {
-    InnerSelf("context");
-    innerTask = SAL_hasInnerSelfTask();
-
-    // Never let a private Inner Self task consume an explicit player action.
-    if (sal.realPlayerInputThisTurn && innerTask) {
-      if (state.InnerSelf) state.InnerSelf.agent = "";
-      globalThis.stop = false;
-      text = beforeInnerSelf;
-      innerTask = false;
-    }
-  }
-
-  sal.innerSelfTaskActive = innerTask;
-
-  // Arc guidance belongs only in an ordinary narrative model call.
-  if (globalThis.stop !== true && !innerTask) {
-    text = SAL_injectArc(text);
-  }
-}
-
-const modifier = (text) => {
-  return {
-    text,
-    stop: globalThis.stop === true
-  };
-};
-
-modifier(text);
