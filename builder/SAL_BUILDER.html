@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAL — Story Arc Light Builder</title>
+<style>
+:root{color-scheme:dark}body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0}main{max-width:1000px;margin:auto;padding:24px}.card{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:18px;margin:14px 0}.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}button{padding:11px 14px;border:0;border-radius:9px;cursor:pointer;font-weight:700}.primary{background:#f8fafc;color:#0f172a}.secondary{background:#334155;color:#f8fafc}.tab.active{outline:2px solid #94a3b8}textarea{width:100%;min-height:520px;background:#020617;color:#e2e8f0;border:1px solid #475569;border-radius:10px;padding:12px;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px}label{display:flex;gap:8px;align-items:center}.ok{color:#86efac}.bad{color:#fca5a5}.muted{color:#94a3b8;font-size:13px}code{color:#f8fafc}</style>
+</head>
+<body><main>
+<section class="card">
+<h1>SAL — Story Arc Light</h1>
+<p>Builds the four paste-ready AI Dungeon scripting tabs using the current upstream Story Arc Engine source plus SAL. Inner Self is optional.</p>
+<div class="row">
+<label><input id="inner" type="checkbox"> Include Inner Self</label>
+<button id="build" class="primary">Build Paste-Ready Tabs</button>
+<button id="copy" class="secondary" disabled>Copy Current Tab</button>
+</div>
+<p id="status" class="muted">Ready. Internet access is required while building.</p>
+</section>
+<section class="card">
+<div class="row" id="tabs">
+<button class="secondary tab active" data-tab="Library">Library</button>
+<button class="secondary tab" data-tab="Input">Input</button>
+<button class="secondary tab" data-tab="Context">Context</button>
+<button class="secondary tab" data-tab="Output">Output</button>
+</div>
+<textarea id="code" readonly placeholder="Click Build Paste-Ready Tabs first."></textarea>
+</section>
+<section class="card">
+<h2>Install</h2>
+<ol>
+<li>Build the tabs above.</li>
+<li>Copy each generated tab into the matching AI Dungeon scripting tab.</li>
+<li>Completely replace the old contents. Do not append a second modifier wrapper.</li>
+<li>Save and make sure Scripts Enabled is on.</li>
+</ol>
+<p class="muted">This builder does not contain a bundled copy of Story Arc Engine or Inner Self. It downloads those projects from their original GitHub repositories when you click Build.</p>
+</section>
+<script>
+(() => {
+  'use strict';
+
+  const SAE_URL = 'https://raw.githubusercontent.com/Yi1i1i/Story-Arc-Engine/main/SAE%20Library';
+  const INNER_SELF_URL = 'https://raw.githubusercontent.com/LewdLeah/Inner-Self/main/src/library.js';
+  const SAL_BASE = 'https://raw.githubusercontent.com/SeanL33316/SAL-AI-Dungeon/main/src/';
+
+  const built = { Library: '', Input: '', Context: '', Output: '' };
+  let active = 'Library';
+
+  const box = document.getElementById('code');
+  const status = document.getElementById('status');
+  const copyButton = document.getElementById('copy');
+  const buildButton = document.getElementById('build');
+  const innerCheckbox = document.getElementById('inner');
+
+  function setStatus(message, kind = '') {
+    status.textContent = message;
+    status.className = kind || 'muted';
+  }
+
+  function show(tab) {
+    active = tab;
+    box.value = built[tab] || '';
+    document.querySelectorAll('.tab').forEach(button => {
+      button.classList.toggle('active', button.dataset.tab === tab);
+    });
+  }
+
+  document.querySelectorAll('.tab').forEach(button => {
+    button.addEventListener('click', () => show(button.dataset.tab));
+  });
+
+  async function getText(url, label) {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`${label} download failed (${response.status})`);
+    return await response.text();
+  }
+
+  buildButton.addEventListener('click', async () => {
+    buildButton.disabled = true;
+    copyButton.disabled = true;
+    setStatus('Downloading current source files…');
+
+    try {
+      const requests = [
+        getText(SAE_URL, 'Story Arc Engine'),
+        getText(SAL_BASE + 'Library_ADDON.js', 'SAL Library add-on'),
+        getText(SAL_BASE + 'Input.js', 'SAL Input'),
+        getText(SAL_BASE + 'Context.js', 'SAL Context'),
+        getText(SAL_BASE + 'Output.js', 'SAL Output')
+      ];
+
+      if (innerCheckbox.checked) {
+        requests.push(getText(INNER_SELF_URL, 'Inner Self'));
+      }
+
+      const values = await Promise.all(requests);
+      const [sae, salLibrary, salInput, salContext, salOutput] = values;
+      const innerSelf = innerCheckbox.checked ? values[5] : '';
+
+      if (!sae.includes('onInput_SAE') || !sae.includes('onContext_SAE') || !sae.includes('onOutput_SAE')) {
+        throw new Error('Story Arc Engine changed from the API SAL expects. Review compatibility before using.');
+      }
+
+      if (!salLibrary.includes('STORY ARC LIGHT (SAL)') || !salLibrary.includes('SAL_protectPlayerInput')) {
+        throw new Error('SAL source did not match the expected format.');
+      }
+
+      if (innerCheckbox.checked && !innerSelf.includes('Inner Self')) {
+        throw new Error('Inner Self source did not match the expected format.');
+      }
+
+      const parts = [];
+      if (innerSelf) {
+        parts.push(
+          '// ============================================================================\n' +
+          '// INNER SELF — downloaded from the original LewdLeah repository\n' +
+          '// ============================================================================\n\n' + innerSelf.trim()
+        );
+      }
+
+      parts.push(
+        '// ============================================================================\n' +
+        '// STORY ARC ENGINE — downloaded from the original Yi1i1i repository\n' +
+        '// ============================================================================\n\n' + sae.trim()
+      );
+
+      parts.push(salLibrary.trim());
+
+      built.Library = parts.join('\n\n');
+      built.Input = salInput;
+      built.Context = salContext;
+      built.Output = salOutput;
+
+      copyButton.disabled = false;
+      show('Library');
+      setStatus(innerSelf ? 'Built SAL + SAE + Inner Self successfully.' : 'Built SAL + SAE successfully.', 'ok');
+    } catch (error) {
+      console.error(error);
+      setStatus(error.message || String(error), 'bad');
+    } finally {
+      buildButton.disabled = false;
+    }
+  });
+
+  copyButton.addEventListener('click', async () => {
+    if (!built[active]) return;
+    try {
+      await navigator.clipboard.writeText(built[active]);
+      setStatus(`${active} copied.`, 'ok');
+    } catch (_) {
+      box.focus();
+      box.select();
+      document.execCommand('copy');
+      setStatus(`${active} selected/copied.`, 'ok');
+    }
+  });
+})();
+</script>
+</main></body>
+</html>
