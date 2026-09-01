@@ -1,0 +1,123 @@
+name: Rebuild combined script from working structure
+
+on:
+  push:
+    paths:
+      - '.github/workflows/rebuild-combined-from-working-structure.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild combined package
+        shell: python
+        run: |
+          from pathlib import Path
+
+          src = Path('src')
+          sal = Path('SAL-only')
+
+          # Keep the complete existing Inner Self library, but remove the old
+          # combined header that incorrectly said SAL lived in the hook files.
+          current = (src / 'library.js').read_text()
+          marker = '// Your "Library" tab should look like this'
+          if marker in current:
+              inner = current[current.index(marker):]
+          else:
+              inner = current
+
+          sal_lib = (sal / 'library.js').read_text()
+
+          header = '''// ============================================================================
+// INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
+// ============================================================================
+// Inner Self v1.0.2 — LewdLeah
+// Story Arc Light (SAL) v1.3.1
+//
+// Structure follows the proven scenario build:
+//   Library = all core code
+//   Input / Context / Output = short coordination hooks only
+// ============================================================================
+
+'''
+
+          (src / 'library.js').write_text(header + inner.rstrip() + '\n\n' + sal_lib)
+
+          hook_headers = {
+              'input.js': '''// ============================================================================
+// INNER SELF + SAL — COMBINED AI DUNGEON INPUT
+// Short coordination hook based on the proven scenario structure.
+// ============================================================================
+
+''',
+              'context.js': '''// ============================================================================
+// INNER SELF + SAL — COMBINED AI DUNGEON CONTEXT
+// Short coordination hook based on the proven scenario structure.
+// ============================================================================
+
+''',
+              'output.js': '''// ============================================================================
+// INNER SELF + SAL — COMBINED AI DUNGEON OUTPUT
+// Short coordination hook based on the proven scenario structure.
+// ============================================================================
+
+'''
+          }
+
+          for name, h in hook_headers.items():
+              body = (sal / name).read_text()
+              # Remove the SAL-only banner while keeping the actual working hook.
+              lines = body.splitlines()
+              cut = 0
+              while cut < len(lines) and (not lines[cut].strip() or lines[cut].lstrip().startswith('//')):
+                  cut += 1
+              body = '\n'.join(lines[cut:]).lstrip() + '\n'
+              (src / name).write_text(h + body)
+
+          # Keep README wording accurate and mention the compact hook structure.
+          p = Path('README.md')
+          readme = p.read_text()
+          old = 'These four files are already combined and coordinated for **Inner Self + SAL**.'
+          new = ('These four files are already combined and coordinated for **Inner Self + SAL**. '
+                 'The Library contains the core code once, while Input, Context, and Output are short coordination hooks.')
+          if old in readme:
+              readme = readme.replace(old, new)
+          p.write_text(readme)
+
+      - name: Verify JavaScript and compact hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check src/library.js
+          node --check src/input.js
+          node --check src/context.js
+          node --check src/output.js
+          grep -q 'function InnerSelf' src/library.js
+          grep -q 'const SAL_VERSION = "1.3.1";' src/library.js
+          grep -q 'SAL_protectPlayerInput(text)' src/input.js
+          grep -q 'InnerSelf("input")' src/input.js
+          grep -q 'InnerSelf("context")' src/context.js
+          grep -q 'InnerSelf("output")' src/output.js
+          test $(wc -c < src/input.js) -lt 2500
+          test $(wc -c < src/context.js) -lt 4000
+          test $(wc -c < src/output.js) -lt 3500
+
+      - name: Commit rebuilt package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add src README.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Rebuild combined script with proven compact hook structure'
+          git push
