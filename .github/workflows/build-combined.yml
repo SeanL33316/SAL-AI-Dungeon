@@ -38,23 +38,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          cat > src/library.js <<'HEADER'
-// ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON LIBRARY
-// ============================================================================
-// Included scripts:
-//   Inner Self v1.0.2 — LewdLeah
-//   Auto-Cards v1.1.3 — LewdLeah (included with Inner Self)
-//   Story Arc Light (SAL) v1.3.0 — SeanL33316
-//
-// This Library tab contains the full official Inner Self library. SAL's core is
-// embedded in each combined Input / Context / Output file so all four tabs are
-// ready to copy and paste without manual merging.
-// ============================================================================
-
-HEADER
-          cat /tmp/inner-self-library.js >> src/library.js
+          {
+            echo '// ============================================================================'
+            echo '// INNER SELF + SAL — COMBINED AI DUNGEON LIBRARY'
+            echo '// ============================================================================'
+            echo '// Included scripts:'
+            echo '//   Inner Self v1.0.2 — LewdLeah'
+            echo '//   Auto-Cards v1.1.3 — LewdLeah (included with Inner Self)'
+            echo '//   Story Arc Light (SAL) v1.3.0 — SeanL33316'
+            echo '//'
+            echo "// This Library tab contains the full official Inner Self library. SAL's core is"
+            echo '// embedded in each combined Input / Context / Output file so all four tabs are'
+            echo '// ready to copy and paste without manual merging.'
+            echo '// ============================================================================'
+            echo
+            cat /tmp/inner-self-library.js
+          } > src/library.js
 
           build_hook() {
             hook="$1"
