@@ -4,23 +4,20 @@ This repository provides a **copy-and-paste-ready combined version of Inner Self
 
 The combined version is the main package in `src/`. Each file is complete for its matching AI Dungeon scripting tab—no manual merging is needed.
 
-## Included scripts and authors
+## Original scripts and authors
 
 - **Inner Self v1.0.2 — LewdLeah**  
   Gives characters an internal life with memory, goals, secrets, planning, self-reflection, and other persistent character behavior.  
   Original project: https://github.com/LewdLeah/Inner-Self
 
-- **Story Arc Light (SAL) v1.3.0 — SeanL33316**  
-  Adds light long-term story direction through flexible future possibilities while keeping the player's newest explicit choice as the highest priority.
-
 - **Auto-Cards v1.1.3 — LewdLeah**  
   Included inside the official Inner Self Library and available through Inner Self's configuration.
 
-### Story Arc Engine foundation
+- **Story Arc Engine (SAE) — Yi1i1i**  
+  The original story-arc system that Story Arc Light was developed from.  
+  Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Engine (SAE) — Yi1i1i** is the original story-arc system that SAL was developed from. SAL keeps the long-term story-direction idea while changing the behavior toward lighter, more flexible, player-first progression.
-
-Original SAE project: https://github.com/Yi1i1i/Story-Arc-Engine
+**Story Arc Light (SAL) v1.3.0** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -82,19 +79,14 @@ SAL is designed to give long-running stories direction without turning the outli
 ## Credits
 
 ### Inner Self
-Created by **LewdLeah**. The combined package uses the official Inner Self source from:
-
+Created by **LewdLeah**.  
 https://github.com/LewdLeah/Inner-Self
 
 ### Auto-Cards
 Created by **LewdLeah** and included as part of the official Inner Self Library source.
 
 ### Story Arc Engine (SAE)
-Created by **Yi1i1i**.
-
-SAL was developed from the Story Arc Engine concept and structure, with changes focused on lighter, flexible story progression and stronger player-choice priority.
-
-Original project:
+Created by **Yi1i1i**. Story Arc Light was developed from the Story Arc Engine story-arc system.  
 https://github.com/Yi1i1i/Story-Arc-Engine
 
 ## License
