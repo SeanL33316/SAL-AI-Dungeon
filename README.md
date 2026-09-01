@@ -11,11 +11,16 @@ The combined version is the main package in `src/`. Each file is complete for it
   Original project: https://github.com/LewdLeah/Inner-Self
 
 - **Story Arc Light (SAL) v1.3.0 — SeanL33316**  
-  Adds light long-term story direction through flexible future possibilities while keeping the player's newest explicit choice as the highest priority.  
-  Project: https://github.com/SeanL33316/SAL-AI-Dungeon
+  Adds light long-term story direction through flexible future possibilities while keeping the player's newest explicit choice as the highest priority.
 
 - **Auto-Cards v1.1.3 — LewdLeah**  
   Included inside the official Inner Self Library and available through Inner Self's configuration.
+
+### Story Arc Engine foundation
+
+**Story Arc Engine (SAE) — Yi1i1i** is the original story-arc system that SAL was developed from. SAL keeps the long-term story-direction idea while changing the behavior toward lighter, more flexible, player-first progression.
+
+Original SAE project: https://github.com/Yi1i1i/Story-Arc-Engine
 
 ## Main package: Inner Self + SAL
 
@@ -84,15 +89,20 @@ https://github.com/LewdLeah/Inner-Self
 ### Auto-Cards
 Created by **LewdLeah** and included as part of the official Inner Self Library source.
 
-### Story Arc Light
-Created by **SeanL33316**.
+### Story Arc Engine (SAE)
+Created by **Yi1i1i**.
 
-SAL is designed as a lighter, player-first story-direction system for AI Dungeon stories that benefit from long-term progression without rigid railroading.
+SAL was developed from the Story Arc Engine concept and structure, with changes focused on lighter, flexible story progression and stronger player-choice priority.
+
+Original project:
+https://github.com/Yi1i1i/Story-Arc-Engine
 
 ## License
 
 SAL-authored code is released under the MIT License in `LICENSE`.
 
 Inner Self and the Inner Self copy of Auto-Cards remain credited to **LewdLeah** and are redistributed under the upstream MIT License preserved in `LICENSE-INNER-SELF`.
+
+Story Arc Engine remains the work of **Yi1i1i**. Refer to the original Story Arc Engine repository for its source and terms.
 
 This project is not an official Latitude / AI Dungeon project and is not affiliated with Latitude.
