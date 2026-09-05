@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON INPUT — v1.3.5
+// SAL — STORY ARC LIGHT — AI DUNGEON INPUT — v1.3.6
 // Paste this entire file into the Input tab.
 // ============================================================================
 

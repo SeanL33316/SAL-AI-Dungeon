@@ -2,7 +2,7 @@
 // INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
 // ============================================================================
 // Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.5
+// Story Arc Light (SAL) v1.3.6
 //
 // Structure follows the proven scenario build:
 //   Library = all core code
@@ -8794,7 +8794,7 @@ function AutoCards(inHook, inText, inStop) {
 // Your other library scripts go here
 
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.5
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.6
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -8804,9 +8804,9 @@ function AutoCards(inHook, inText, inStop) {
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.5";
+const SAL_VERSION = "1.3.6";
 const SAL_INITIAL_WAIT_TURNS = 10;
-const SAL_FAILED_RETRY_COOLDOWN = 5;
+const SAL_MIN_ARC_ITEMS = 5;
 const SAL_PROMPT_VERSION = 2;
 const SAL_SETTINGS_KEYS = "SAL Settings";
 const SAL_ARC_KEYS = "Current Story Arc";
@@ -9079,7 +9079,7 @@ function SAL_syncCards() {
     if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
   }
 
-  // v1.3.5 timing migration: do not surprise an existing story with an
+  // v1.3.6 timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
@@ -9212,21 +9212,32 @@ function SAL_extractArcResult(text) {
     .trim();
   raw = raw.replace(/^```[A-Za-z0-9_-]*\s*/i, "").replace(/\s*```$/i, "").trim();
 
+  const makeResult = (items) => {
+    const clean = items.map(SAL_cleanArcItem).filter(Boolean).slice(0, 8);
+    if (clean.length < SAL_MIN_ARC_ITEMS) return null;
+    return {
+      count: clean.length,
+      numbered: clean.map((item, index) => `${index + 1}. ${item}`).join("\n")
+    };
+  };
+
   let bestCount = 0;
+
   const jsonCandidates = [raw];
   const firstBracket = raw.indexOf("[");
   const lastBracket = raw.lastIndexOf("]");
-  if (firstBracket >= 0 && lastBracket > firstBracket) jsonCandidates.push(raw.slice(firstBracket, lastBracket + 1));
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    jsonCandidates.push(raw.slice(firstBracket, lastBracket + 1));
+  }
 
   for (const candidate of jsonCandidates) {
     try {
       const parsed = JSON.parse(candidate);
       if (Array.isArray(parsed)) {
-        const items = parsed.map(SAL_cleanArcItem).filter(Boolean);
-        bestCount = Math.max(bestCount, items.length);
-        if (items.length >= 8) {
-          return { count: 8, numbered: items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
-        }
+        const clean = parsed.map(SAL_cleanArcItem).filter(Boolean);
+        bestCount = Math.max(bestCount, Math.min(8, clean.length));
+        const result = makeResult(clean);
+        if (result) return result;
       }
     } catch (_) {}
   }
@@ -9236,47 +9247,58 @@ function SAL_extractArcResult(text) {
   const markers = [];
   let match;
   while ((match = markerRegex.exec(numberedRaw)) !== null) {
-    markers.push({ number: Number(match[2]), markerStart: match.index + match[1].length, bodyStart: markerRegex.lastIndex });
+    markers.push({
+      number: Number(match[2]),
+      markerStart: match.index + match[1].length,
+      bodyStart: markerRegex.lastIndex
+    });
   }
 
   let sequence = [];
-  let completed = null;
+  let bestSequence = [];
   for (const marker of markers) {
-    if (marker.number === 1) sequence = [marker];
-    else if (sequence.length && marker.number === sequence.length + 1) sequence.push(marker);
-    bestCount = Math.max(bestCount, sequence.length);
-    if (sequence.length === 8) {
-      completed = sequence.slice();
-      break;
+    if (marker.number === 1) {
+      sequence = [marker];
+    } else if (sequence.length && marker.number === sequence.length + 1) {
+      sequence.push(marker);
     }
+
+    if (sequence.length > bestSequence.length) bestSequence = sequence.slice();
+    bestCount = Math.max(bestCount, Math.min(8, sequence.length));
+    if (bestSequence.length >= 8) break;
   }
 
-  if (completed) {
-    const items = completed.map((marker, index) => {
-      const end = index < completed.length - 1 ? completed[index + 1].markerStart : numberedRaw.length;
+  if (bestSequence.length >= SAL_MIN_ARC_ITEMS) {
+    const items = bestSequence.map((marker, index) => {
+      const end = index < bestSequence.length - 1
+        ? bestSequence[index + 1].markerStart
+        : numberedRaw.length;
       return SAL_cleanArcItem(numberedRaw.slice(marker.bodyStart, end));
     }).filter(Boolean);
-    bestCount = Math.max(bestCount, items.length);
-    if (items.length >= 8) {
-      return { count: 8, numbered: items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
-    }
+    const result = makeResult(items);
+    if (result) return result;
   }
 
   const lines = raw.split("\n").map(line => line.trim()).filter(Boolean);
-  const bullets = lines.map(line => line.match(/^[-*•]\s+(.+)/)).filter(Boolean).map(match => SAL_cleanArcItem(match[1])).filter(Boolean);
-  bestCount = Math.max(bestCount, bullets.length);
-  if (bullets.length >= 8) {
-    return { count: 8, numbered: bullets.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
-  }
+
+  const bullets = lines
+    .map(line => line.match(/^[-*•]\s+(.+)/))
+    .filter(Boolean)
+    .map(match => SAL_cleanArcItem(match[1]))
+    .filter(Boolean);
+  bestCount = Math.max(bestCount, Math.min(8, bullets.length));
+  const bulletResult = makeResult(bullets);
+  if (bulletResult) return bulletResult;
 
   const plain = lines.filter(line => {
     if (/^(?:story arc|future possibilities|outline|here(?:'s| is))/i.test(line)) return false;
     const words = line.split(/\s+/).filter(Boolean).length;
     return words >= 2 && words <= 14 && line.length <= 180;
   });
-  bestCount = Math.max(bestCount, plain.length);
-  if (plain.length >= 8 && lines.length <= 12) {
-    return { count: 8, numbered: plain.slice(0, 8).map((item, index) => `${index + 1}. ${SAL_cleanArcItem(item)}`).join("\n") };
+  bestCount = Math.max(bestCount, Math.min(8, plain.length));
+  if (lines.length <= 12) {
+    const plainResult = makeResult(plain);
+    if (plainResult) return plainResult;
   }
 
   return { count: Math.min(8, bestCount), numbered: "" };
@@ -9444,7 +9466,7 @@ function SAL_processGeneratedOutput(outputText) {
   const numbered = parsed.numbered;
   s.lastArcRecognizedItems = parsed.count;
 
-  if (numbered) {
+  if (numbered && parsed.count >= SAL_MIN_ARC_ITEMS) {
     s.arc = SAL_softArcText(numbered);
     s.pendingGeneration = false;
     s.captureGeneration = false;
@@ -9452,9 +9474,9 @@ function SAL_processGeneratedOutput(outputText) {
     s.deferred = false;
     s.generationReason = "";
     s.nextArcTurn = s.turn + s.turnsPerAICall;
-    s.lastArcGenerationStatus = "success";
+    s.lastArcGenerationStatus = `success (${parsed.count} possibilities)`;
     SAL_saveArc();
-    return "<< ✅ Story Arc Light updated and saved. Continue playing normally. >>";
+    return `<< ✅ Story Arc Light updated with ${parsed.count} possibilities. Continue playing normally. >>`;
   }
 
   const hadArc = Boolean(String(s.arc || "").trim());
@@ -9463,16 +9485,20 @@ function SAL_processGeneratedOutput(outputText) {
   s.attempt = 0;
   s.deferred = false;
   s.generationReason = "";
-  s.nextArcTurn = Math.max(s.nextArcTurn, s.turn + SAL_FAILED_RETRY_COOLDOWN);
-  s.lastArcGenerationStatus = `failed (${parsed.count}/8 recognized)`;
+
+  // Do not interrupt the player with a quick automatic retry. A failed
+  // planning call waits the full normal refresh interval before SAL
+  // tries automatically again. Manual /sal redo remains available.
+  s.nextArcTurn = s.turn + s.turnsPerAICall;
+  s.lastArcGenerationStatus = `kept existing arc (${parsed.count}/8 recognized; minimum ${SAL_MIN_ARC_ITEMS})`;
 
   try {
-    log(`SAL arc parse failed: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
+    log(`SAL arc parse below minimum: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
   } catch (_) {}
 
   return hadArc
-    ? `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). The existing arc was kept. Continue playing normally, or use '/sal redo' to try again. >>`
-    : `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). No arc was saved. Continue playing normally; SAL will try again later, or use '/sal redo' to try again now. >>`;
+    ? `<< ⚠️ Story Arc Light only found ${parsed.count}/8 usable possibilities, below the minimum of ${SAL_MIN_ARC_ITEMS}. The existing arc was kept. SAL will wait for the normal refresh interval; use '/sal redo' only if you want to try again sooner. >>`
+    : `<< ⚠️ Story Arc Light only found ${parsed.count}/8 usable possibilities, below the minimum of ${SAL_MIN_ARC_ITEMS}. No arc was saved. SAL will wait for the normal refresh interval; use '/sal redo' only if you want to try again sooner. >>`;
 }
 
 function SAL_onNormalOutput(outputText) {
@@ -9517,6 +9543,7 @@ function SAL_statusText() {
     `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,
     `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,
     `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,
+    `Minimum usable arc: ${SAL_MIN_ARC_ITEMS} possibilities`,
     `Last arc generation: ${s.lastArcGenerationStatus}`,
     `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,
     "",
