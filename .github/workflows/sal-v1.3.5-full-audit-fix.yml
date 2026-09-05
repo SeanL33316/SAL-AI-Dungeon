@@ -45,3 +45,5 @@ jobs:
           git add SAL-only src README.md
           git commit -m 'Fix late SAL refresh generation and parser'
           git push
+
+# rerun after internal version patch fix
