@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.4
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.5
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,9 +9,10 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.4";
+const SAL_VERSION = "1.3.5";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_FAILED_RETRY_COOLDOWN = 5;
+const SAL_PROMPT_VERSION = 2;
 const SAL_SETTINGS_KEYS = "SAL Settings";
 const SAL_ARC_KEYS = "Current Story Arc";
 const SAL_LEGACY_SETTINGS_KEYS = "/SAL Settings";
@@ -44,7 +45,15 @@ function SAL_state() {
   if (typeof s.commandMessage !== "string") s.commandMessage = "";
   if (typeof s.commandPending !== "boolean") s.commandPending = false;
   if (typeof s.commandResponse !== "string") s.commandResponse = "";
-  if (typeof s.prompt !== "string" || !s.prompt.trim()) s.prompt = SAL_defaultPrompt();
+  if (!Array.isArray(s.utilityOutputs)) s.utilityOutputs = [];
+  if (!Number.isFinite(s.promptVersion)) s.promptVersion = 0;
+  if (!Number.isFinite(s.lastArcRecognizedItems)) s.lastArcRecognizedItems = 0;
+  if (typeof s.lastArcGenerationStatus !== "string") s.lastArcGenerationStatus = "not yet";
+  if (typeof s.lastPlanningContextTrimmed !== "boolean") s.lastPlanningContextTrimmed = false;
+  if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {
+    s.prompt = SAL_defaultPrompt();
+    s.promptVersion = SAL_PROMPT_VERSION;
+  }
   s.version = SAL_VERSION;
   return s;
 }
@@ -55,36 +64,30 @@ function SAL_defaultPrompt() {
 <SYSTEM>
 Stop normal story generation temporarily.
 
-Create ONLY a numbered list of exactly 8 short, flexible future possibilities
-for the current story.
+Create ONLY a numbered list of exactly 8 flexible future possibilities for the
+current story. Do not continue the narrative and do not write prose outside the
+list.
 
-PLAYER AGENCY IS THE HIGHEST PRIORITY:
-- The player's newest explicit input always outranks this outline.
-- Never contradict, replace, reinterpret, skip, or undo a choice the player made.
-- Never decide the player's dialogue, destination, acceptance, refusal,
+PLAYER AGENCY IS HIGHEST PRIORITY:
+- The player's newest explicit input always outranks the outline.
+- Never decide or undo the player's dialogue, destination, acceptance, refusal,
   relationship, quest choice, or other voluntary decision.
-- If the player changes direction, adapt the outline to that new direction.
-- If a possibility no longer fits, replace or discard it.
-- Treat every item as optional background possibility, never destiny.
+- If the player changes direction, adapt, replace, delay, or discard ideas.
+- Treat every item as an optional possibility, never destiny.
 
 STORY ARC LIGHT:
-- Write exactly 8 numbered items.
-- Each item must be one concise sentence.
-- Output exactly eight lines numbered 1. through 8.
-- Do not add a heading, introduction, explanation, or closing text.
-- Keep developments broad, flexible, and easy to alter.
-- Build mainly from established characters, places, consequences, goals,
-  tensions, mysteries, and unresolved threads in the actual story.
-- Respect the established genre, setting, tone, scale, and continuity.
-- Prefer opportunities, reactions, and consequences over predetermined outcomes.
-- Mix major developments with ordinary life or quieter beats when appropriate.
-- Let NPCs have independent motives, priorities, and lives.
-- Avoid repeating recent scenes, locations, dialogue patterns, conflicts,
-  emotional beats, or encounters.
-- Do not invent an enormous crisis merely to force the plot forward.
-- Do not force romance, friendship, rivalry, quests, travel, combat, or commitments.
+- Output exactly 8 lines numbered 1. through 8.
+- Each item must be only 4 to 8 words.
+- Keep the entire response under 80 words.
+- Use established characters, places, goals, consequences, tensions, mysteries,
+  ordinary life, and unresolved threads from the actual story.
+- Mix major developments with quieter or everyday developments when appropriate.
+- Let NPCs have independent motives and lives.
+- Avoid repeating recent scenes, locations, conflicts, dialogue patterns, or beats.
+- Do not force romance, friendship, rivalry, quests, travel, combat, or crises.
+- No heading, introduction, explanation, closing text, or extra commentary.
 
-Output the numbered list only.
+Output the eight numbered lines only.
 </SYSTEM>
 >>
   `.trim();
@@ -281,7 +284,7 @@ function SAL_syncCards() {
     if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
   }
 
-  // v1.3.4 timing migration: do not surprise an existing story with an
+  // v1.3.5 timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
@@ -301,6 +304,91 @@ function SAL_saveArc() {
   SAL_updateCard(SAL_ARC_KEYS, s.arc || "");
 }
 
+function SAL_rememberUtilityOutput(value) {
+  const s = SAL_state();
+  const clean = String(value || "").trim();
+  if (!clean) return;
+  s.utilityOutputs = Array.isArray(s.utilityOutputs) ? s.utilityOutputs : [];
+  s.utilityOutputs = s.utilityOutputs.filter(item => item !== clean);
+  s.utilityOutputs.push(clean);
+  if (s.utilityOutputs.length > 6) s.utilityOutputs = s.utilityOutputs.slice(-6);
+}
+
+function SAL_cleanContextNoise(value) {
+  let text = String(value || "");
+  text = text.replace(/<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>[\s\S]*?<<END STORY ARC LIGHT>>/gi, "");
+  text = text.replace(/<<[^<>]*(?:Story Arc Light|Updating Story Arc|Generating Story Arc|Story Arc generated|Attempt Limit Reached)[^<>]*>>/gi, "");
+
+  const s = SAL_state();
+  if (Array.isArray(s.utilityOutputs)) {
+    for (const output of s.utilityOutputs) {
+      const noise = String(output || "");
+      if (noise) text = text.split(noise).join("");
+    }
+  }
+  return text.replace(/\n{3,}/g, "\n\n");
+}
+
+function SAL_contextLimits() {
+  const hasInfo = typeof info !== "undefined" && info && typeof info === "object";
+  const maxChars = hasInfo && Number.isFinite(info.maxChars) ? Math.max(0, Math.floor(info.maxChars)) : 0;
+  const memoryLength = hasInfo && Number.isFinite(info.memoryLength) ? Math.max(0, Math.floor(info.memoryLength)) : 0;
+  return { maxChars, memoryLength };
+}
+
+function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim) {
+  const raw = String(baseText || "");
+  const block = String(blockText || "").trim();
+  if (!block) return SAL_cleanContextNoise(raw);
+
+  const { maxChars, memoryLength } = SAL_contextLimits();
+  const splitAt = Math.min(memoryLength, raw.length);
+  let memory = raw.slice(0, splitAt);
+  let body = SAL_cleanContextNoise(raw.slice(splitAt));
+  const suffix = "\n\n" + block;
+  let trimmed = false;
+
+  if (!maxChars) {
+    if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = false;
+    return memory + body + suffix;
+  }
+
+  const baseBudget = Math.max(0, maxChars - suffix.length);
+  if (memory.length > baseBudget) {
+    const memoryBudget = Math.max(0, Math.floor(baseBudget * 0.4));
+    memory = memory.slice(0, memoryBudget);
+    trimmed = true;
+  }
+
+  const bodyBudget = Math.max(0, baseBudget - memory.length);
+  if (body.length > bodyBudget) {
+    body = bodyBudget > 1 ? "\n" + body.slice(-(bodyBudget - 1)) : body.slice(-bodyBudget);
+    trimmed = true;
+  }
+
+  let result = memory + body + suffix;
+  if (result.length > maxChars) {
+    const over = result.length - maxChars;
+    if (body.length >= over) {
+      body = body.slice(over);
+    } else {
+      const remaining = over - body.length;
+      body = "";
+      memory = memory.slice(0, Math.max(0, memory.length - remaining));
+    }
+    result = memory + body + suffix;
+    trimmed = true;
+  }
+
+  if (result.length > maxChars) {
+    result = suffix.length <= maxChars ? suffix : suffix.slice(0, maxChars);
+    trimmed = true;
+  }
+
+  if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = trimmed;
+  return result;
+}
+
 function SAL_softArcText(numbered) {
   const clean = String(numbered || "").trim();
   if (!clean) return "";
@@ -314,31 +402,93 @@ function SAL_softArcText(numbered) {
   ].join("\n");
 }
 
+function SAL_cleanArcItem(value) {
+  return String(value || "")
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/^[-–—:;,\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function SAL_extractArcResult(text) {
+  let raw = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .trim();
+  raw = raw.replace(/^```[A-Za-z0-9_-]*\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  let bestCount = 0;
+  const jsonCandidates = [raw];
+  const firstBracket = raw.indexOf("[");
+  const lastBracket = raw.lastIndexOf("]");
+  if (firstBracket >= 0 && lastBracket > firstBracket) jsonCandidates.push(raw.slice(firstBracket, lastBracket + 1));
+
+  for (const candidate of jsonCandidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) {
+        const items = parsed.map(SAL_cleanArcItem).filter(Boolean);
+        bestCount = Math.max(bestCount, items.length);
+        if (items.length >= 8) {
+          return { count: 8, numbered: items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
+        }
+      }
+    } catch (_) {}
+  }
+
+  const numberedRaw = raw.replace(/\[\s*([1-8])\s*\]/g, "$1.");
+  const markerRegex = /(^|[\n\r]|\s)(?:[-*•]\s*)?(?:\*\*)?([1-8])\s*(?:[.)\:：\-–—])(?:\*\*)?\s+/g;
+  const markers = [];
+  let match;
+  while ((match = markerRegex.exec(numberedRaw)) !== null) {
+    markers.push({ number: Number(match[2]), markerStart: match.index + match[1].length, bodyStart: markerRegex.lastIndex });
+  }
+
+  let sequence = [];
+  let completed = null;
+  for (const marker of markers) {
+    if (marker.number === 1) sequence = [marker];
+    else if (sequence.length && marker.number === sequence.length + 1) sequence.push(marker);
+    bestCount = Math.max(bestCount, sequence.length);
+    if (sequence.length === 8) {
+      completed = sequence.slice();
+      break;
+    }
+  }
+
+  if (completed) {
+    const items = completed.map((marker, index) => {
+      const end = index < completed.length - 1 ? completed[index + 1].markerStart : numberedRaw.length;
+      return SAL_cleanArcItem(numberedRaw.slice(marker.bodyStart, end));
+    }).filter(Boolean);
+    bestCount = Math.max(bestCount, items.length);
+    if (items.length >= 8) {
+      return { count: 8, numbered: items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
+    }
+  }
+
+  const lines = raw.split("\n").map(line => line.trim()).filter(Boolean);
+  const bullets = lines.map(line => line.match(/^[-*•]\s+(.+)/)).filter(Boolean).map(match => SAL_cleanArcItem(match[1])).filter(Boolean);
+  bestCount = Math.max(bestCount, bullets.length);
+  if (bullets.length >= 8) {
+    return { count: 8, numbered: bullets.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n") };
+  }
+
+  const plain = lines.filter(line => {
+    if (/^(?:story arc|future possibilities|outline|here(?:'s| is))/i.test(line)) return false;
+    const words = line.split(/\s+/).filter(Boolean).length;
+    return words >= 2 && words <= 14 && line.length <= 180;
+  });
+  bestCount = Math.max(bestCount, plain.length);
+  if (plain.length >= 8 && lines.length <= 12) {
+    return { count: 8, numbered: plain.slice(0, 8).map((item, index) => `${index + 1}. ${SAL_cleanArcItem(item)}`).join("\n") };
+  }
+
+  return { count: Math.min(8, bestCount), numbered: "" };
+}
+
 function SAL_extractNumberedArc(text) {
-  const lines = String(text || "").replace(/\r/g, "").split("\n");
-  let items = [];
-
-  // Accept normal numbering, Markdown-bold numbering, and 1) style numbering.
-  for (const raw of lines) {
-    const match = raw.trim().match(/^(?:[-*•]\s*)?(?:\*\*)?(\d{1,2})[.)](?:\*\*)?\s+(.+)/);
-    if (!match) continue;
-    const body = match[2].trim();
-    if (body) items.push(body);
-  }
-
-  // Some models occasionally return eight bullet points despite the prompt.
-  // Accept that shape too rather than forcing the player into a retry cycle.
-  if (items.length < 8) {
-    const bullets = lines
-      .map(line => line.trim().match(/^[-*•]\s+(.+)/))
-      .filter(Boolean)
-      .map(match => match[1].trim())
-      .filter(Boolean);
-    if (bullets.length >= 8) items = bullets;
-  }
-
-  if (items.length < 8) return "";
-  return items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\n");
+  return SAL_extractArcResult(text).numbered;
 }
 
 function SAL_removeFirstArcItem() {
@@ -363,7 +513,7 @@ function SAL_removeFirstArcItem() {
 
 function SAL_scheduleIfDue() {
   const s = SAL_state();
-  if (!s.enabled || SAL_isBusy()) return false;
+  if (!s.enabled || SAL_isBusy() || s.deferred) return false;
   if (s.turn < s.nextArcTurn) return false;
 
   s.pendingGeneration = true;
@@ -417,6 +567,7 @@ function SAL_queueDisplayCommand(message) {
   const s = SAL_state();
   s.commandPending = true;
   s.commandResponse = String(message || "SAL command completed.");
+  SAL_rememberUtilityOutput(s.commandResponse);
   s.realPlayerInputThisTurn = false;
   s.innerSelfTaskActive = false;
   // Phoenix currently errors on empty Input text and on stop:true. A zero-width
@@ -476,12 +627,12 @@ function SAL_generationContext(baseText) {
   const s = SAL_state();
   s.pendingGeneration = false;
   s.captureGeneration = true;
-  return String(baseText || "") + "\n\n" + s.prompt;
+  return SAL_appendContextBlock(baseText, s.prompt, true);
 }
 
 function SAL_injectArc(baseText) {
   const s = SAL_state();
-  if (!s.enabled || !s.arc.trim()) return baseText;
+  if (!s.enabled || !s.arc.trim()) return SAL_cleanContextNoise(baseText);
 
   const guidance = [
     "<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>",
@@ -489,12 +640,14 @@ function SAL_injectArc(baseText) {
     "<<END STORY ARC LIGHT>>"
   ].join("\n");
 
-  return String(baseText || "") + "\n\n" + guidance;
+  return SAL_appendContextBlock(baseText, guidance, false);
 }
 
 function SAL_processGeneratedOutput(outputText) {
   const s = SAL_state();
-  const numbered = SAL_extractNumberedArc(outputText);
+  const parsed = SAL_extractArcResult(outputText);
+  const numbered = parsed.numbered;
+  s.lastArcRecognizedItems = parsed.count;
 
   if (numbered) {
     s.arc = SAL_softArcText(numbered);
@@ -504,13 +657,11 @@ function SAL_processGeneratedOutput(outputText) {
     s.deferred = false;
     s.generationReason = "";
     s.nextArcTurn = s.turn + s.turnsPerAICall;
+    s.lastArcGenerationStatus = "success";
     SAL_saveArc();
     return "<< ✅ Story Arc Light updated and saved. Continue playing normally. >>";
   }
 
-  // Do not enter an automatic Continue/retry loop. Keep the old arc, clear the
-  // private generation state, and give automatic SAL a short cooldown. The
-  // player can always use /sal redo again immediately if they want to retry.
   const hadArc = Boolean(String(s.arc || "").trim());
   s.pendingGeneration = false;
   s.captureGeneration = false;
@@ -518,10 +669,15 @@ function SAL_processGeneratedOutput(outputText) {
   s.deferred = false;
   s.generationReason = "";
   s.nextArcTurn = Math.max(s.nextArcTurn, s.turn + SAL_FAILED_RETRY_COOLDOWN);
+  s.lastArcGenerationStatus = `failed (${parsed.count}/8 recognized)`;
+
+  try {
+    log(`SAL arc parse failed: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
+  } catch (_) {}
 
   return hadArc
-    ? "<< ⚠️ Story Arc Light could not build a valid 8-part arc this time. The existing arc was kept. Continue playing normally, or use '/sal redo' to try again. >>"
-    : "<< ⚠️ Story Arc Light could not build a valid 8-part arc this time. No arc was saved. Continue playing normally; SAL will try again later, or use '/sal redo' to try again now. >>";
+    ? `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). The existing arc was kept. Continue playing normally, or use '/sal redo' to try again. >>`
+    : `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). No arc was saved. Continue playing normally; SAL will try again later, or use '/sal redo' to try again now. >>`;
 }
 
 function SAL_onNormalOutput(outputText) {
@@ -566,6 +722,8 @@ function SAL_statusText() {
     `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,
     `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,
     `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,
+    `Last arc generation: ${s.lastArcGenerationStatus}`,
+    `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,
     "",
     s.arc || "No Story Arc has been generated yet."
   ].join("\n");

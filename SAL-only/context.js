@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.4
+// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.5
 // Paste this entire file into the Context tab.
 // ============================================================================
 
@@ -18,6 +18,7 @@ if (sal.commandPending) {
   // SAL owns this private planning call.
   if (state.InnerSelf) state.InnerSelf.agent = "";
   sal.innerSelfTaskActive = false;
+  globalThis.stop = false;
   text = SAL_generationContext(text);
 } else {
   const beforeInnerSelf = text;

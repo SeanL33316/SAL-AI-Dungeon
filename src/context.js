@@ -18,6 +18,7 @@ if (sal.commandPending) {
   // SAL owns this private planning call.
   if (state.InnerSelf) state.InnerSelf.agent = "";
   sal.innerSelfTaskActive = false;
+  globalThis.stop = false;
   text = SAL_generationContext(text);
 } else {
   const beforeInnerSelf = text;
