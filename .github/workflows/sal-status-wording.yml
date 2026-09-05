@@ -1,0 +1,67 @@
+name: SAL status wording update
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sal-status-wording.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update SAL status wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = '''function SAL_statusText() {\n  const s = SAL_state();\n  return [\n    `Story Arc Light ${SAL_VERSION}`,\n    `Enabled: ${s.enabled ? "yes" : "no"}`,\n    `Story turns: ${s.turn}`,\n    `First automatic arc: after ${SAL_INITIAL_WAIT_TURNS} story turns`,\n    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,\n    `Next automatic arc check: story turn ${s.nextArcTurn}`,\n    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,\n    `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,\n    `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,\n    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n    "",\n    s.arc || "No Story Arc has been generated yet."\n  ].join("\\n");\n}\n'''
+
+          new = '''function SAL_statusText() {\n  const s = SAL_state();\n  const hasArc = Boolean(String(s.arc || "").trim());\n  return [\n    `Story Arc Light ${SAL_VERSION}`,\n    `Enabled: ${s.enabled ? "yes" : "no"}`,\n    `Story turns: ${s.turn}`,\n    `Initial observation period: ${SAL_INITIAL_WAIT_TURNS} story turns`,\n    `Story Arc exists: ${hasArc ? "yes" : "no"}`,\n    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,\n    hasArc\n      ? `Next automatic refresh: story turn ${s.nextArcTurn}`\n      : `First automatic arc check: story turn ${s.nextArcTurn}`,\n    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,\n    `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,\n    `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,\n    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n    "",\n    s.arc || "No Story Arc has been generated yet."\n  ].join("\\n");\n}\n'''
+
+          for filename in ['SAL-only/library.js', 'src/library.js']:
+              p = Path(filename)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{filename}: expected one SAL_statusText block, found {count}')
+              p.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Verify JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check SAL-only/library.js
+          node --check src/library.js
+
+      - name: Test status wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'Initial observation period:' SAL-only/library.js
+          grep -q 'Story Arc exists:' SAL-only/library.js
+          grep -q 'Next automatic refresh:' SAL-only/library.js
+          grep -q 'First automatic arc check:' SAL-only/library.js
+          grep -q 'Initial observation period:' src/library.js
+          grep -q 'Story Arc exists:' src/library.js
+          grep -q 'Next automatic refresh:' src/library.js
+          grep -q 'First automatic arc check:' src/library.js
+
+      - name: Commit status wording update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add SAL-only/library.js src/library.js
+          git commit -m 'Clarify SAL status timing display'
+          git push
