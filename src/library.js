@@ -9346,13 +9346,17 @@ function SAL_onNormalOutput(outputText) {
 
 function SAL_statusText() {
   const s = SAL_state();
+  const hasArc = Boolean(String(s.arc || "").trim());
   return [
     `Story Arc Light ${SAL_VERSION}`,
     `Enabled: ${s.enabled ? "yes" : "no"}`,
     `Story turns: ${s.turn}`,
-    `First automatic arc: after ${SAL_INITIAL_WAIT_TURNS} story turns`,
+    `Initial observation period: ${SAL_INITIAL_WAIT_TURNS} story turns`,
+    `Story Arc exists: ${hasArc ? "yes" : "no"}`,
     `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,
-    `Next automatic arc check: story turn ${s.nextArcTurn}`,
+    hasArc
+      ? `Next automatic refresh: story turn ${s.nextArcTurn}`
+      : `First automatic arc check: story turn ${s.nextArcTurn}`,
     `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,
     `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,
     `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,
