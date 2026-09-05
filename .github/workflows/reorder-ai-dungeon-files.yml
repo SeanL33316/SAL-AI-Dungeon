@@ -1,0 +1,81 @@
+name: Reorder AI Dungeon files
+
+on:
+  push:
+    paths:
+      - '.github/workflows/reorder-ai-dungeon-files.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  reorder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rename files into AI Dungeon tab order
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git mv src/library.js src/1-Library.js
+          git mv src/input.js src/2-Input.js
+          git mv src/context.js src/3-Context.js
+          git mv src/output.js src/4-Output.js
+
+          git mv SAL-only/library.js SAL-only/1-Library.js
+          git mv SAL-only/input.js SAL-only/2-Input.js
+          git mv SAL-only/context.js SAL-only/3-Context.js
+          git mv SAL-only/output.js SAL-only/4-Output.js
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              'src/library.js': 'src/1-Library.js',
+              'src/input.js': 'src/2-Input.js',
+              'src/context.js': 'src/3-Context.js',
+              'src/output.js': 'src/4-Output.js',
+              'SAL-only/library.js': 'SAL-only/1-Library.js',
+              'SAL-only/input.js': 'SAL-only/2-Input.js',
+              'SAL-only/context.js': 'SAL-only/3-Context.js',
+              'SAL-only/output.js': 'SAL-only/4-Output.js',
+          }
+
+          for file_name in ['README.md', 'src/README.md', 'SAL-only/README.md']:
+              path = Path(file_name)
+              text = path.read_text()
+              for old, new in replacements.items():
+                  text = text.replace(old, new)
+              text = text.replace(
+                  '├── library.js\n├── input.js\n├── context.js\n└── output.js',
+                  '├── 1-Library.js\n├── 2-Input.js\n├── 3-Context.js\n└── 4-Output.js'
+              )
+              path.write_text(text)
+          PY
+
+      - name: Verify renamed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check src/1-Library.js
+          node --check src/2-Input.js
+          node --check src/3-Context.js
+          node --check src/4-Output.js
+          node --check SAL-only/1-Library.js
+          node --check SAL-only/2-Input.js
+          node --check SAL-only/3-Context.js
+          node --check SAL-only/4-Output.js
+
+      - name: Commit reordered layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add src SAL-only README.md
+          git commit -m 'Order files to match AI Dungeon tabs'
+          git push
