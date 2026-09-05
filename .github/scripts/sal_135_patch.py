@@ -22,6 +22,7 @@ def replace_between(text, start_marker, end_marker, new_block, label):
 
 
 text = text.replace('v1.3.4', 'v1.3.5')
+text = text.replace('const SAL_VERSION = \"1.3.4\";', 'const SAL_VERSION = \"1.3.5\";')
 text = replace_once(
     text,
     'const SAL_FAILED_RETRY_COOLDOWN = 5;\n',
