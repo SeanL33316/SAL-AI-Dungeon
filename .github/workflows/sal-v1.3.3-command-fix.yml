@@ -1,0 +1,219 @@
+name: SAL v1.3.3 command handling fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sal-v1.3.3-command-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply command fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          libs = [Path('SAL-only/library.js'), Path('src/library.js')]
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected one match, got {count}')
+              return text.replace(old, new, 1)
+
+          old_is_command = '''function SAL_isCommand(value) {\n  const t = String(value || "").trim().toLowerCase();\n  return [\n    "/sal",\n    "/sal status",\n    "/sal help",\n    "/sal redo",\n    "/sal refresh",\n    "/redo arc",\n    "/sal stop",\n    "/stop"\n  ].includes(t);\n}\n'''
+
+          new_is_command = '''function SAL_normalizeCommand(value) {\n  let raw = String(value || "").trim();\n  if (!raw) return "";\n\n  // AI Dungeon may wrap Do/Say inputs before the Input hook sees them.\n  // Accept raw Story commands, > Character /command, and\n  // > Character says, "/command" without treating ordinary prose as a command.\n  raw = raw.replace(/[.!?]\\s*$/, "").trim();\n\n  let candidate = raw;\n  let match = raw.match(/^>\\s+.+?\\s+(?:say|says),?\\s*["“](\\/[^"”]+)["”]$/i);\n  if (match) {\n    candidate = match[1];\n  } else {\n    match = raw.match(/^>\\s+([A-Za-z0-9_.'’\\-]+(?:\\s+[A-Za-z0-9_.'’\\-]+){0,4})\\s+(\\/.+)$/i);\n    if (match) candidate = match[2];\n  }\n\n  candidate = candidate\n    .replace(/^["“]|["”]$/g, "")\n    .replace(/[.!?]+$/, "")\n    .trim()\n    .toLowerCase()\n    .replace(/\\s+/g, " ");\n\n  const allowed = [\n    "/sal",\n    "/sal status",\n    "/sal help",\n    "/sal redo",\n    "/sal refresh",\n    "/redo arc",\n    "/sal stop",\n    "/stop"\n  ];\n\n  return allowed.includes(candidate) ? candidate : "";\n}\n\nfunction SAL_isCommand(value) {\n  return Boolean(SAL_normalizeCommand(value));\n}\n'''
+
+          old_protect_start = '''function SAL_protectPlayerInput(inputText) {\n  const s = SAL_state();\n  const realInput = SAL_isRealPlayerInput(inputText);\n'''
+          new_protect_start = '''function SAL_protectPlayerInput(inputText) {\n  const s = SAL_state();\n\n  // Clear only a previous SAL-owned command message. Never erase messages\n  // created by another script such as Inner Self or Auto-Cards.\n  if (s.commandMessageActive && state.message === s.commandMessage) {\n    delete state.message;\n  }\n  s.commandMessageActive = false;\n  s.commandMessage = "";\n  s.inputStop = false;\n\n  const realInput = SAL_isRealPlayerInput(inputText);\n'''
+
+          old_input_commands_start = '''function SAL_inputCommands(inputText) {\n  const s = SAL_state();\n  const t = String(inputText || "").trim().toLowerCase();\n\n  if (t === "/sal" || t === "/sal status" || t === "/sal help") {\n    s.showStatus = true;\n    return " ";\n  }\n'''
+          new_input_commands_start = '''function SAL_setCommandMessage(message) {\n  const s = SAL_state();\n  const clean = String(message || "");\n  s.inputStop = true;\n  s.commandMessage = clean;\n  s.commandMessageActive = true;\n  state.message = clean;\n}\n\nfunction SAL_inputCommands(inputText) {\n  const s = SAL_state();\n  const t = SAL_normalizeCommand(inputText);\n\n  if (t === "/sal" || t === "/sal status") {\n    s.showStatus = false;\n    SAL_setCommandMessage(SAL_statusText());\n    return null;\n  }\n\n  if (t === "/sal help") {\n    s.showStatus = false;\n    SAL_setCommandMessage(SAL_helpText());\n    return null;\n  }\n'''
+
+          old_stop = '''  if (t === "/sal stop" || t === "/stop") {\n    if (SAL_isBusy() || s.deferred) {\n      s.pendingGeneration = false;\n      s.captureGeneration = false;\n      s.deferred = false;\n      s.generationReason = "";\n      s.attempt = 0;\n      s.pendingMessage = "Story Arc Light generation stopped.";\n      return " ";\n    }\n  }\n\n  return inputText;\n}\n'''
+          new_stop = '''  if (t === "/sal stop" || t === "/stop") {\n    const wasPending = SAL_isBusy() || s.deferred;\n    s.pendingGeneration = false;\n    s.captureGeneration = false;\n    s.deferred = false;\n    s.generationReason = "";\n    s.attempt = 0;\n    s.pendingMessage = "";\n    SAL_setCommandMessage(\n      wasPending\n        ? "Story Arc Light generation stopped."\n        : "No Story Arc Light generation is currently pending."\n    );\n    return null;\n  }\n\n  return inputText;\n}\n'''
+
+          old_output_commands = '''function SAL_outputCommands(outputText) {\n  const s = SAL_state();\n\n  if (s.pendingMessage) {\n    const message = s.pendingMessage;\n    s.pendingMessage = "";\n    return message;\n  }\n\n  if (!s.showStatus) return outputText;\n  s.showStatus = false;\n\n  return [\n    `Story Arc Light ${SAL_VERSION}`,\n    `Enabled: ${s.enabled ? "yes" : "no"}`,\n    `Story turns: ${s.turn}`,\n    `First automatic arc: after ${SAL_INITIAL_WAIT_TURNS} story turns`,\n    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,\n    `Next automatic arc check: story turn ${s.nextArcTurn}`,\n    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,\n    `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,\n    `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,\n    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n    "",\n    s.arc || "No Story Arc has been generated yet."\n  ].join("\\n");\n}\n'''
+          new_output_commands = '''function SAL_statusText() {\n  const s = SAL_state();\n  return [\n    `Story Arc Light ${SAL_VERSION}`,\n    `Enabled: ${s.enabled ? "yes" : "no"}`,\n    `Story turns: ${s.turn}`,\n    `First automatic arc: after ${SAL_INITIAL_WAIT_TURNS} story turns`,\n    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,\n    `Next automatic arc check: story turn ${s.nextArcTurn}`,\n    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,\n    `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,\n    `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,\n    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n    "",\n    s.arc || "No Story Arc has been generated yet."\n  ].join("\\n");\n}\n\nfunction SAL_helpText() {\n  return [\n    `Story Arc Light ${SAL_VERSION} commands`,\n    "",\n    "/sal or /sal status — show SAL status without advancing the story",\n    "/sal help — show this command list",\n    "/sal redo or /sal refresh or /redo arc — generate a fresh arc now",\n    "/sal stop or /stop — cancel a pending SAL generation"\n  ].join("\\n");\n}\n\nfunction SAL_outputCommands(outputText) {\n  const s = SAL_state();\n\n  if (s.pendingMessage) {\n    const message = s.pendingMessage;\n    s.pendingMessage = "";\n    return message;\n  }\n\n  // Backward-compatible fallback for adventures carrying the old status flag.\n  if (!s.showStatus) return outputText;\n  s.showStatus = false;\n  return SAL_statusText();\n}\n'''
+
+          for path in libs:
+              text = path.read_text()
+              text = text.replace('v1.3.2', 'v1.3.3')
+              text = replace_once(
+                  text,
+                  '  if (typeof s.pendingMessage !== "string") s.pendingMessage = "";\n',
+                  '  if (typeof s.pendingMessage !== "string") s.pendingMessage = "";\n  if (typeof s.inputStop !== "boolean") s.inputStop = false;\n  if (typeof s.commandMessageActive !== "boolean") s.commandMessageActive = false;\n  if (typeof s.commandMessage !== "string") s.commandMessage = "";\n',
+                  f'{path}: command state'
+              )
+              text = replace_once(text, old_is_command, new_is_command, f'{path}: normalize command')
+              text = replace_once(text, old_protect_start, new_protect_start, f'{path}: input reset')
+              text = replace_once(text, old_input_commands_start, new_input_commands_start, f'{path}: status/help commands')
+              text = replace_once(text, old_stop, new_stop, f'{path}: stop command')
+              text = replace_once(text, old_output_commands, new_output_commands, f'{path}: status helper')
+              path.write_text(text)
+
+          # Input hooks must actually honor SAL's stop flag so status/help/stop do
+          # not call the model or advance the story.
+          for path in [Path('SAL-only/input.js'), Path('src/input.js')]:
+              text = path.read_text().replace('v1.3.2', 'v1.3.3')
+              text = replace_once(
+                  text,
+                  'if (SAL_hasInnerSelf() && !SAL_isBusy()) {\n  InnerSelf("input");\n}\n\nconst modifier = (text) => {\n  return { text };\n};\n',
+                  'const salInput = SAL_state();\nif (SAL_hasInnerSelf() && !SAL_isBusy() && !salInput.inputStop) {\n  InnerSelf("input");\n}\n\nconst modifier = (text) => {\n  return {\n    text,\n    stop: salInput.inputStop === true\n  };\n};\n',
+                  f'{path}: stop-aware input hook'
+              )
+              path.write_text(text)
+
+          # Version headers in SAL-only hooks.
+          for name in ['context.js', 'output.js']:
+              p = Path('SAL-only') / name
+              p.write_text(p.read_text().replace('v1.3.2', 'v1.3.3'))
+
+          # README: document that commands work from Story, Do, and Say modes.
+          p = Path('README.md')
+          readme = p.read_text().replace('SAL) v1.3.2', 'SAL) v1.3.3')
+          old = '''### SAL commands\n\n- `/sal` or `/sal status` — show SAL status and the current Story Arc.\n- `/sal redo` or `/redo arc` — request a fresh Story Arc immediately.\n- `/sal stop` or `/stop` — cancel a pending SAL generation.\n'''
+          new = '''### SAL commands\n\nSAL recognizes its commands in AI Dungeon's Story, Do, and Say input formats, including third-person character-name wrappers. Status/help/stop commands are intercepted without calling the story model, so they do not advance the story.\n\n- `/sal` or `/sal status` — show SAL status and the current Story Arc without advancing the story.\n- `/sal help` — show the SAL command list without advancing the story.\n- `/sal redo`, `/sal refresh`, or `/redo arc` — request a fresh Story Arc immediately.\n- `/sal stop` or `/stop` — cancel a pending SAL generation without advancing the story.\n'''
+          if old not in readme:
+              raise RuntimeError('README command block not found')
+          p.write_text(readme.replace(old, new, 1))
+          PY
+
+      - name: Verify JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check SAL-only/library.js
+          node --check SAL-only/input.js
+          node --check SAL-only/context.js
+          node --check SAL-only/output.js
+          node --check src/library.js
+          node --check src/input.js
+          node --check src/context.js
+          node --check src/output.js
+
+      - name: Test every SAL command and input wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/test-sal-commands.js <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+          const assert = require('assert');
+
+          const library = fs.readFileSync('SAL-only/library.js', 'utf8');
+          const inputHook = fs.readFileSync('SAL-only/input.js', 'utf8');
+
+          function sandbox() {
+            const ctx = {
+              state: {},
+              storyCards: [],
+              console,
+              log: () => {},
+              addStoryCard(keys, entry, type) {
+                ctx.storyCards.push({ id: ctx.storyCards.length + 1, keys, entry, type });
+                return ctx.storyCards.length - 1;
+              },
+              updateStoryCard(index, keys, entry, type) {
+                ctx.storyCards[index] = { ...ctx.storyCards[index], keys, entry, type };
+                return true;
+              },
+              removeStoryCard(index) { ctx.storyCards.splice(index, 1); },
+            };
+            ctx.globalThis = ctx;
+            vm.createContext(ctx);
+            vm.runInContext(library, ctx);
+            return ctx;
+          }
+
+          const wrappers = cmd => [
+            cmd,
+            `> You ${cmd}.`,
+            `> You say, "${cmd}"`,
+            `> Sean ${cmd}.`,
+            `> Sean says, "${cmd}"`,
+            `> Sean K.I.A. ${cmd}.`,
+            `> Sean K.I.A. says, "${cmd}"`,
+          ];
+
+          const statusCommands = ['/sal', '/sal status'];
+          const helpCommands = ['/sal help'];
+          const redoCommands = ['/sal redo', '/sal refresh', '/redo arc'];
+          const stopCommands = ['/sal stop', '/stop'];
+
+          for (const cmd of [...statusCommands, ...helpCommands, ...redoCommands, ...stopCommands]) {
+            for (const wrapped of wrappers(cmd)) {
+              const ctx = sandbox();
+              const beforeTurn = ctx.state.SAL.turn;
+              ctx.text = wrapped;
+              const result = vm.runInContext(inputHook, ctx);
+
+              assert.strictEqual(ctx.SAL_normalizeCommand(wrapped), cmd, `${wrapped} should normalize to ${cmd}`);
+              assert.strictEqual(ctx.state.SAL.turn, beforeTurn, `${wrapped} must not increment story turn in Input`);
+
+              if (statusCommands.includes(cmd)) {
+                assert.strictEqual(result.stop, true, `${wrapped} status should stop model call`);
+                assert.ok(ctx.state.message.includes('Story Arc Light 1.3.3'));
+                assert.strictEqual(ctx.state.SAL.pendingGeneration, false);
+              } else if (helpCommands.includes(cmd)) {
+                assert.strictEqual(result.stop, true, `${wrapped} help should stop model call`);
+                assert.ok(ctx.state.message.includes('/sal redo'));
+              } else if (redoCommands.includes(cmd)) {
+                assert.strictEqual(result.stop, false, `${wrapped} redo needs one private model call`);
+                assert.strictEqual(ctx.state.SAL.pendingGeneration, true);
+                assert.strictEqual(ctx.state.SAL.captureGeneration, true);
+                assert.strictEqual(ctx.state.SAL.generationReason, 'manual');
+              } else if (stopCommands.includes(cmd)) {
+                assert.strictEqual(result.stop, true, `${wrapped} stop should stop model call`);
+                assert.ok(ctx.state.message.includes('No Story Arc Light generation'));
+              }
+            }
+          }
+
+          // Stop must clear a real pending generation too.
+          {
+            const ctx = sandbox();
+            ctx.state.SAL.pendingGeneration = true;
+            ctx.state.SAL.captureGeneration = true;
+            ctx.text = '> You say, "/sal stop"';
+            const result = vm.runInContext(inputHook, ctx);
+            assert.strictEqual(result.stop, true);
+            assert.strictEqual(ctx.state.SAL.pendingGeneration, false);
+            assert.strictEqual(ctx.state.SAL.captureGeneration, false);
+            assert.strictEqual(ctx.state.message, 'Story Arc Light generation stopped.');
+          }
+
+          // Ordinary prose mentioning a command must not be intercepted.
+          for (const prose of [
+            '> You tell Bob to type /sal status.',
+            '> Sean explains that /sal redo can rebuild the arc.',
+            'I tell her that the command is /stop.',
+          ]) {
+            const ctx = sandbox();
+            assert.strictEqual(ctx.SAL_normalizeCommand(prose), '', `false positive: ${prose}`);
+          }
+
+          console.log('All SAL command tests passed');
+          NODE
+          node /tmp/test-sal-commands.js
+
+      - name: Commit SAL v1.3.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add SAL-only src README.md
+          git commit -m 'Fix SAL commands across AI Dungeon input modes'
+          git push
