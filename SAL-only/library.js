@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.2
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.3
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,7 +9,7 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.2";
+const SAL_VERSION = "1.3.3";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_FAILED_RETRY_COOLDOWN = 5;
 const SAL_SETTINGS_KEYS = "SAL Settings";
@@ -39,6 +39,9 @@ function SAL_state() {
   if (typeof s.innerSelfTaskActive !== "boolean") s.innerSelfTaskActive = false;
   if (typeof s.showStatus !== "boolean") s.showStatus = false;
   if (typeof s.pendingMessage !== "string") s.pendingMessage = "";
+  if (typeof s.inputStop !== "boolean") s.inputStop = false;
+  if (typeof s.commandMessageActive !== "boolean") s.commandMessageActive = false;
+  if (typeof s.commandMessage !== "string") s.commandMessage = "";
   if (typeof s.prompt !== "string" || !s.prompt.trim()) s.prompt = SAL_defaultPrompt();
   s.version = SAL_VERSION;
   return s;
@@ -102,9 +105,32 @@ function SAL_isBusy() {
   return Boolean(s.pendingGeneration || s.captureGeneration);
 }
 
-function SAL_isCommand(value) {
-  const t = String(value || "").trim().toLowerCase();
-  return [
+function SAL_normalizeCommand(value) {
+  let raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // AI Dungeon may wrap Do/Say inputs before the Input hook sees them.
+  // Accept raw Story commands, > Character /command, and
+  // > Character says, "/command" without treating ordinary prose as a command.
+  raw = raw.replace(/[.!?]\s*$/, "").trim();
+
+  let candidate = raw;
+  let match = raw.match(/^>\s+(?:[A-Z][A-Za-z0-9_.'’\-]*(?:\s+[A-Z][A-Za-z0-9_.'’\-]*){0,4})\s+[Ss]ay(?:s)?,?\s*["“](\/[^"”]+)["”]$/);
+  if (match) {
+    candidate = match[1];
+  } else {
+    match = raw.match(/^>\s+([A-Z][A-Za-z0-9_.'’\-]*(?:\s+[A-Z][A-Za-z0-9_.'’\-]*){0,4})\s+(\/.+)$/);
+    if (match) candidate = match[2];
+  }
+
+  candidate = candidate
+    .replace(/^["“]|["”]$/g, "")
+    .replace(/[.!?]+$/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+  const allowed = [
     "/sal",
     "/sal status",
     "/sal help",
@@ -113,7 +139,13 @@ function SAL_isCommand(value) {
     "/redo arc",
     "/sal stop",
     "/stop"
-  ].includes(t);
+  ];
+
+  return allowed.includes(candidate) ? candidate : "";
+}
+
+function SAL_isCommand(value) {
+  return Boolean(SAL_normalizeCommand(value));
 }
 
 function SAL_isRealPlayerInput(value) {
@@ -247,7 +279,7 @@ function SAL_syncCards() {
     if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
   }
 
-  // v1.3.2 timing migration: do not surprise an existing story with an
+  // v1.3.3 timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
@@ -341,6 +373,16 @@ function SAL_scheduleIfDue() {
 
 function SAL_protectPlayerInput(inputText) {
   const s = SAL_state();
+
+  // Clear only a previous SAL-owned command message. Never erase messages
+  // created by another script such as Inner Self or Auto-Cards.
+  if (s.commandMessageActive && state.message === s.commandMessage) {
+    delete state.message;
+  }
+  s.commandMessageActive = false;
+  s.commandMessage = "";
+  s.inputStop = false;
+
   const realInput = SAL_isRealPlayerInput(inputText);
   const command = SAL_isCommand(inputText);
   s.realPlayerInputThisTurn = realInput;
@@ -371,13 +413,29 @@ function SAL_protectPlayerInput(inputText) {
   }
 }
 
+function SAL_setCommandMessage(message) {
+  const s = SAL_state();
+  const clean = String(message || "");
+  s.inputStop = true;
+  s.commandMessage = clean;
+  s.commandMessageActive = true;
+  state.message = clean;
+}
+
 function SAL_inputCommands(inputText) {
   const s = SAL_state();
-  const t = String(inputText || "").trim().toLowerCase();
+  const t = SAL_normalizeCommand(inputText);
 
-  if (t === "/sal" || t === "/sal status" || t === "/sal help") {
-    s.showStatus = true;
-    return " ";
+  if (t === "/sal" || t === "/sal status") {
+    s.showStatus = false;
+    SAL_setCommandMessage(SAL_statusText());
+    return null;
+  }
+
+  if (t === "/sal help") {
+    s.showStatus = false;
+    SAL_setCommandMessage(SAL_helpText());
+    return null;
   }
 
   if (t === "/sal redo" || t === "/sal refresh" || t === "/redo arc") {
@@ -394,15 +452,19 @@ function SAL_inputCommands(inputText) {
   }
 
   if (t === "/sal stop" || t === "/stop") {
-    if (SAL_isBusy() || s.deferred) {
-      s.pendingGeneration = false;
-      s.captureGeneration = false;
-      s.deferred = false;
-      s.generationReason = "";
-      s.attempt = 0;
-      s.pendingMessage = "Story Arc Light generation stopped.";
-      return " ";
-    }
+    const wasPending = SAL_isBusy() || s.deferred;
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.deferred = false;
+    s.generationReason = "";
+    s.attempt = 0;
+    s.pendingMessage = "";
+    SAL_setCommandMessage(
+      wasPending
+        ? "Story Arc Light generation stopped."
+        : "No Story Arc Light generation is currently pending."
+    );
+    return null;
   }
 
   return inputText;
@@ -485,18 +547,8 @@ function SAL_onNormalOutput(outputText) {
   return outputText;
 }
 
-function SAL_outputCommands(outputText) {
+function SAL_statusText() {
   const s = SAL_state();
-
-  if (s.pendingMessage) {
-    const message = s.pendingMessage;
-    s.pendingMessage = "";
-    return message;
-  }
-
-  if (!s.showStatus) return outputText;
-  s.showStatus = false;
-
   return [
     `Story Arc Light ${SAL_VERSION}`,
     `Enabled: ${s.enabled ? "yes" : "no"}`,
@@ -511,6 +563,32 @@ function SAL_outputCommands(outputText) {
     "",
     s.arc || "No Story Arc has been generated yet."
   ].join("\n");
+}
+
+function SAL_helpText() {
+  return [
+    `Story Arc Light ${SAL_VERSION} commands`,
+    "",
+    "/sal or /sal status — show SAL status without advancing the story",
+    "/sal help — show this command list",
+    "/sal redo or /sal refresh or /redo arc — generate a fresh arc now",
+    "/sal stop or /stop — cancel a pending SAL generation"
+  ].join("\n");
+}
+
+function SAL_outputCommands(outputText) {
+  const s = SAL_state();
+
+  if (s.pendingMessage) {
+    const message = s.pendingMessage;
+    s.pendingMessage = "";
+    return message;
+  }
+
+  // Backward-compatible fallback for adventures carrying the old status flag.
+  if (!s.showStatus) return outputText;
+  s.showStatus = false;
+  return SAL_statusText();
 }
 
 // Initialize and synchronize editable Story Cards on every hook.

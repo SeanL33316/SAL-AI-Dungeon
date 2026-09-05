@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.2
+// SAL — STORY ARC LIGHT — AI DUNGEON CONTEXT — v1.3.3
 // Paste this entire file into the Context tab.
 // ============================================================================
 

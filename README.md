@@ -17,7 +17,7 @@ The combined version is the main package in `src/`. Each file is complete for it
   The original story-arc system that Story Arc Light was developed from.  
   Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Light (SAL) v1.3.2** is the lighter, player-first story-arc version used in this repository.
+**Story Arc Light (SAL) v1.3.3** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -94,9 +94,12 @@ Older adventures that used `/SAL Settings` or `/Current Story Arc` are migrated 
 
 ### SAL commands
 
-- `/sal` or `/sal status` — show SAL status and the current Story Arc.
-- `/sal redo` or `/redo arc` — request a fresh Story Arc immediately.
-- `/sal stop` or `/stop` — cancel a pending SAL generation.
+SAL recognizes its commands in AI Dungeon's Story, Do, and Say input formats, including third-person character-name wrappers. Status/help/stop commands are intercepted without calling the story model, so they do not advance the story.
+
+- `/sal` or `/sal status` — show SAL status and the current Story Arc without advancing the story.
+- `/sal help` — show the SAL command list without advancing the story.
+- `/sal redo`, `/sal refresh`, or `/redo arc` — request a fresh Story Arc immediately.
+- `/sal stop` or `/stop` — cancel a pending SAL generation without advancing the story.
 
 ## Credits
 
