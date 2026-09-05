@@ -2,12 +2,12 @@
 
 Use this folder for the **combined Inner Self + Story Arc Light (SAL)** version.
 
-Copy each file into the matching AI Dungeon scripting tab:
+The files are numbered in the same order as AI Dungeon's scripting tabs so you can work straight down the list:
 
-- `library.js` → Library
-- `input.js` → Input
-- `context.js` → Context
-- `output.js` → Output
+1. `1-Library.js` → Library
+2. `2-Input.js` → Input
+3. `3-Context.js` → Context
+4. `4-Output.js` → Output
 
 Original script credits:
 
