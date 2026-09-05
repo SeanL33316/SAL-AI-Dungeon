@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON OUTPUT — v1.3.1
+// SAL — STORY ARC LIGHT — AI DUNGEON OUTPUT — v1.3.2
 // Paste this entire file into the Output tab.
 // ============================================================================
 
