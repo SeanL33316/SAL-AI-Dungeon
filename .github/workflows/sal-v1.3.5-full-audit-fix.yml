@@ -1,0 +1,719 @@
+name: SAL v1.3.5 full audit fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sal-v1.3.5-full-audit-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply audited SAL fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          sal_path = Path('SAL-only/library.js')
+          text = sal_path.read_text()
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          def replace_between(text, start_marker, end_marker, new_block, label):
+              start = text.find(start_marker)
+              if start < 0:
+                  raise RuntimeError(f'{label}: start marker not found')
+              end = text.find(end_marker, start)
+              if end < 0:
+                  raise RuntimeError(f'{label}: end marker not found')
+              return text[:start] + new_block.rstrip() + '\n\n' + text[end:]
+
+          text = text.replace('v1.3.4', 'v1.3.5')
+          text = replace_once(
+              text,
+              'const SAL_FAILED_RETRY_COOLDOWN = 5;\n',
+              'const SAL_FAILED_RETRY_COOLDOWN = 5;\nconst SAL_PROMPT_VERSION = 2;\n',
+              'prompt version constant'
+          )
+
+          text = replace_once(
+              text,
+              '  if (typeof s.commandResponse !== "string") s.commandResponse = "";\n  if (typeof s.prompt !== "string" || !s.prompt.trim()) s.prompt = SAL_defaultPrompt();\n  s.version = SAL_VERSION;\n',
+              '  if (typeof s.commandResponse !== "string") s.commandResponse = "";\n'
+              '  if (!Array.isArray(s.utilityOutputs)) s.utilityOutputs = [];\n'
+              '  if (!Number.isFinite(s.promptVersion)) s.promptVersion = 0;\n'
+              '  if (!Number.isFinite(s.lastArcRecognizedItems)) s.lastArcRecognizedItems = 0;\n'
+              '  if (typeof s.lastArcGenerationStatus !== "string") s.lastArcGenerationStatus = "not yet";\n'
+              '  if (typeof s.lastPlanningContextTrimmed !== "boolean") s.lastPlanningContextTrimmed = false;\n'
+              '  if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {\n'
+              '    s.prompt = SAL_defaultPrompt();\n'
+              '    s.promptVersion = SAL_PROMPT_VERSION;\n'
+              '  }\n'
+              '  s.version = SAL_VERSION;\n',
+              'state migration'
+          )
+
+          new_prompt = r'''function SAL_defaultPrompt() {
+  return `
+<<
+<SYSTEM>
+Stop normal story generation temporarily.
+
+Create ONLY a numbered list of exactly 8 flexible future possibilities for the
+current story. Do not continue the narrative and do not write prose outside the
+list.
+
+PLAYER AGENCY IS HIGHEST PRIORITY:
+- The player's newest explicit input always outranks the outline.
+- Never decide or undo the player's dialogue, destination, acceptance, refusal,
+  relationship, quest choice, or other voluntary decision.
+- If the player changes direction, adapt, replace, delay, or discard ideas.
+- Treat every item as an optional possibility, never destiny.
+
+STORY ARC LIGHT:
+- Output exactly 8 lines numbered 1. through 8.
+- Each item must be only 4 to 8 words.
+- Keep the entire response under 80 words.
+- Use established characters, places, goals, consequences, tensions, mysteries,
+  ordinary life, and unresolved threads from the actual story.
+- Mix major developments with quieter or everyday developments when appropriate.
+- Let NPCs have independent motives and lives.
+- Avoid repeating recent scenes, locations, conflicts, dialogue patterns, or beats.
+- Do not force romance, friendship, rivalry, quests, travel, combat, or crises.
+- No heading, introduction, explanation, closing text, or extra commentary.
+
+Output the eight numbered lines only.
+</SYSTEM>
+>>
+  `.trim();
+}'''
+          text = replace_between(
+              text,
+              'function SAL_defaultPrompt() {',
+              'function SAL_hasInnerSelf() {',
+              new_prompt,
+              'default prompt'
+          )
+
+          helpers = r'''function SAL_rememberUtilityOutput(value) {
+  const s = SAL_state();
+  const clean = String(value || "").trim();
+  if (!clean) return;
+
+  s.utilityOutputs = Array.isArray(s.utilityOutputs) ? s.utilityOutputs : [];
+  s.utilityOutputs = s.utilityOutputs.filter(item => item !== clean);
+  s.utilityOutputs.push(clean);
+  if (s.utilityOutputs.length > 6) s.utilityOutputs = s.utilityOutputs.slice(-6);
+}
+
+function SAL_cleanContextNoise(value) {
+  let text = String(value || "");
+
+  // Remove SAL guidance blocks if a client ever persists them into history.
+  text = text.replace(
+    /<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>[\s\S]*?<<END STORY ARC LIGHT>>/gi,
+    ""
+  );
+
+  // Remove visible SAL control notices from model context. They are UI/status
+  // text, not story events, and can confuse later private planning calls.
+  text = text.replace(
+    /<<[^<>]*(?:Story Arc Light|Updating Story Arc|Generating Story Arc|Story Arc generated|Attempt Limit Reached)[^<>]*>>/gi,
+    ""
+  );
+
+  const s = SAL_state();
+  if (Array.isArray(s.utilityOutputs)) {
+    for (const output of s.utilityOutputs) {
+      const noise = String(output || "");
+      if (noise) text = text.split(noise).join("");
+    }
+  }
+
+  return text.replace(/\n{3,}/g, "\n\n");
+}
+
+function SAL_contextLimits() {
+  const hasInfo = typeof info !== "undefined" && info && typeof info === "object";
+  const maxChars = hasInfo && Number.isFinite(info.maxChars)
+    ? Math.max(0, Math.floor(info.maxChars))
+    : 0;
+  const memoryLength = hasInfo && Number.isFinite(info.memoryLength)
+    ? Math.max(0, Math.floor(info.memoryLength))
+    : 0;
+  return { maxChars, memoryLength };
+}
+
+function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim) {
+  const raw = String(baseText || "");
+  const block = String(blockText || "").trim();
+  if (!block) return SAL_cleanContextNoise(raw);
+
+  const { maxChars, memoryLength } = SAL_contextLimits();
+  const splitAt = Math.min(memoryLength, raw.length);
+  let memory = raw.slice(0, splitAt);
+  let body = SAL_cleanContextNoise(raw.slice(splitAt));
+  const suffix = "\n\n" + block;
+  let trimmed = false;
+
+  if (!maxChars) {
+    if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = false;
+    return memory + body + suffix;
+  }
+
+  const baseBudget = Math.max(0, maxChars - suffix.length);
+
+  // The private task must remain intact. If Memory alone would crowd out the
+  // prompt, preserve a useful prefix of Memory and prioritize recent story text.
+  if (memory.length > baseBudget) {
+    const memoryBudget = Math.max(0, Math.floor(baseBudget * 0.4));
+    memory = memory.slice(0, memoryBudget);
+    trimmed = true;
+  }
+
+  let bodyBudget = Math.max(0, baseBudget - memory.length);
+  if (body.length > bodyBudget) {
+    body = bodyBudget > 1
+      ? "\n" + body.slice(-(bodyBudget - 1))
+      : body.slice(-bodyBudget);
+    trimmed = true;
+  }
+
+  let result = memory + body + suffix;
+
+  // Extremely small context limits are unusual, but never return over maxChars.
+  if (result.length > maxChars) {
+    const over = result.length - maxChars;
+    if (body.length >= over) {
+      body = body.slice(over);
+    } else {
+      const remaining = over - body.length;
+      body = "";
+      memory = memory.slice(0, Math.max(0, memory.length - remaining));
+    }
+    result = memory + body + suffix;
+    trimmed = true;
+  }
+
+  if (result.length > maxChars) {
+    // Last-resort fallback: preserve as much of the planning block as possible.
+    result = suffix.length <= maxChars ? suffix : suffix.slice(0, maxChars);
+    trimmed = true;
+  }
+
+  if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = trimmed;
+  return result;
+}'''
+
+          text = replace_once(
+              text,
+              'function SAL_softArcText(numbered) {',
+              helpers + '\n\nfunction SAL_softArcText(numbered) {',
+              'context helpers insertion'
+          )
+
+          new_parser = r'''function SAL_cleanArcItem(value) {
+  return String(value || "")
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/^[-–—:;,\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function SAL_extractArcResult(text) {
+  let raw = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .trim();
+
+  raw = raw
+    .replace(/^```[A-Za-z0-9_-]*\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  let bestCount = 0;
+
+  // Accept a JSON array if a model chooses that representation.
+  const jsonCandidates = [raw];
+  const firstBracket = raw.indexOf("[");
+  const lastBracket = raw.lastIndexOf("]");
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    jsonCandidates.push(raw.slice(firstBracket, lastBracket + 1));
+  }
+
+  for (const candidate of jsonCandidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) {
+        const items = parsed.map(SAL_cleanArcItem).filter(Boolean);
+        bestCount = Math.max(bestCount, items.length);
+        if (items.length >= 8) {
+          return {
+            count: 8,
+            numbered: items.slice(0, 8)
+              .map((item, index) => `${index + 1}. ${item}`)
+              .join("\n")
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Normalize [1] style labels to the usual numbered marker form.
+  const numberedRaw = raw.replace(/\[\s*([1-8])\s*\]/g, "$1.");
+  const markerRegex = /(^|[\n\r]|\s)(?:[-*•]\s*)?(?:\*\*)?([1-8])\s*(?:[.)\:：\-–—])(?:\*\*)?\s+/g;
+  const markers = [];
+  let match;
+
+  while ((match = markerRegex.exec(numberedRaw)) !== null) {
+    markers.push({
+      number: Number(match[2]),
+      markerStart: match.index + match[1].length,
+      bodyStart: markerRegex.lastIndex
+    });
+  }
+
+  let sequence = [];
+  let completed = null;
+
+  for (const marker of markers) {
+    if (marker.number === 1) {
+      sequence = [marker];
+    } else if (sequence.length && marker.number === sequence.length + 1) {
+      sequence.push(marker);
+    }
+
+    bestCount = Math.max(bestCount, sequence.length);
+    if (sequence.length === 8) {
+      completed = sequence.slice();
+      break;
+    }
+  }
+
+  if (completed) {
+    const items = completed.map((marker, index) => {
+      const end = index < completed.length - 1
+        ? completed[index + 1].markerStart
+        : numberedRaw.length;
+      return SAL_cleanArcItem(numberedRaw.slice(marker.bodyStart, end));
+    }).filter(Boolean);
+
+    bestCount = Math.max(bestCount, items.length);
+    if (items.length >= 8) {
+      return {
+        count: 8,
+        numbered: items.slice(0, 8)
+          .map((item, index) => `${index + 1}. ${item}`)
+          .join("\n")
+      };
+    }
+  }
+
+  const lines = raw.split("\n").map(line => line.trim()).filter(Boolean);
+
+  // Accept eight Markdown/bullet items.
+  const bullets = lines
+    .map(line => line.match(/^[-*•]\s+(.+)/))
+    .filter(Boolean)
+    .map(match => SAL_cleanArcItem(match[1]))
+    .filter(Boolean);
+  bestCount = Math.max(bestCount, bullets.length);
+  if (bullets.length >= 8) {
+    return {
+      count: 8,
+      numbered: bullets.slice(0, 8)
+        .map((item, index) => `${index + 1}. ${item}`)
+        .join("\n")
+    };
+  }
+
+  // Last tolerant fallback: exactly eight-ish short unnumbered lines. This is
+  // still safe because this parser only runs on SAL's private planning output.
+  const plain = lines.filter(line => {
+    if (/^(?:story arc|future possibilities|outline|here(?:'s| is))/i.test(line)) return false;
+    const words = line.split(/\s+/).filter(Boolean).length;
+    return words >= 2 && words <= 14 && line.length <= 180;
+  });
+  bestCount = Math.max(bestCount, plain.length);
+  if (plain.length >= 8 && lines.length <= 12) {
+    return {
+      count: 8,
+      numbered: plain.slice(0, 8)
+        .map((item, index) => `${index + 1}. ${SAL_cleanArcItem(item)}`)
+        .join("\n")
+    };
+  }
+
+  return { count: Math.min(8, bestCount), numbered: "" };
+}
+
+function SAL_extractNumberedArc(text) {
+  return SAL_extractArcResult(text).numbered;
+}'''
+
+          text = replace_between(
+              text,
+              'function SAL_extractNumberedArc(text) {',
+              'function SAL_removeFirstArcItem() {',
+              new_parser,
+              'arc parser'
+          )
+
+          text = replace_once(
+              text,
+              '  if (!s.enabled || SAL_isBusy()) return false;\n',
+              '  if (!s.enabled || SAL_isBusy() || s.deferred) return false;\n',
+              'deferred scheduling guard'
+          )
+
+          text = replace_once(
+              text,
+              '  s.commandResponse = String(message || "SAL command completed.");\n  s.realPlayerInputThisTurn = false;\n',
+              '  s.commandResponse = String(message || "SAL command completed.");\n  SAL_rememberUtilityOutput(s.commandResponse);\n  s.realPlayerInputThisTurn = false;\n',
+              'utility output memory'
+          )
+
+          new_context_functions = r'''function SAL_generationContext(baseText) {
+  const s = SAL_state();
+  s.pendingGeneration = false;
+  s.captureGeneration = true;
+  return SAL_appendContextBlock(baseText, s.prompt, true);
+}
+
+function SAL_injectArc(baseText) {
+  const s = SAL_state();
+  if (!s.enabled || !s.arc.trim()) return SAL_cleanContextNoise(baseText);
+
+  const guidance = [
+    "<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>",
+    s.arc,
+    "<<END STORY ARC LIGHT>>"
+  ].join("\n");
+
+  return SAL_appendContextBlock(baseText, guidance, false);
+}'''
+          text = replace_between(
+              text,
+              'function SAL_generationContext(baseText) {',
+              'function SAL_processGeneratedOutput(outputText) {',
+              new_context_functions,
+              'context generation/injection'
+          )
+
+          new_process = r'''function SAL_processGeneratedOutput(outputText) {
+  const s = SAL_state();
+  const parsed = SAL_extractArcResult(outputText);
+  const numbered = parsed.numbered;
+  s.lastArcRecognizedItems = parsed.count;
+
+  if (numbered) {
+    s.arc = SAL_softArcText(numbered);
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.attempt = 0;
+    s.deferred = false;
+    s.generationReason = "";
+    s.nextArcTurn = s.turn + s.turnsPerAICall;
+    s.lastArcGenerationStatus = "success";
+    SAL_saveArc();
+    return "<< ✅ Story Arc Light updated and saved. Continue playing normally. >>";
+  }
+
+  // Keep the old arc and stop cleanly. Never create an automatic Continue loop.
+  const hadArc = Boolean(String(s.arc || "").trim());
+  s.pendingGeneration = false;
+  s.captureGeneration = false;
+  s.attempt = 0;
+  s.deferred = false;
+  s.generationReason = "";
+  s.nextArcTurn = Math.max(s.nextArcTurn, s.turn + SAL_FAILED_RETRY_COOLDOWN);
+  s.lastArcGenerationStatus = `failed (${parsed.count}/8 recognized)`;
+
+  try {
+    log(
+      `SAL arc parse failed: recognized ${parsed.count}/8 items. Raw model output: ` +
+      String(outputText || "").slice(0, 1600)
+    );
+  } catch (_) {}
+
+  return hadArc
+    ? `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). The existing arc was kept. Continue playing normally, or use '/sal redo' to try again. >>`
+    : `<< ⚠️ Story Arc Light could not build a valid 8-part arc this time (${parsed.count}/8 items recognized). No arc was saved. Continue playing normally; SAL will try again later, or use '/sal redo' to try again now. >>`;
+}'''
+          text = replace_between(
+              text,
+              'function SAL_processGeneratedOutput(outputText) {',
+              'function SAL_onNormalOutput(outputText) {',
+              new_process,
+              'generation output processing'
+          )
+
+          text = replace_once(
+              text,
+              '    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n    "",\n',
+              '    `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,\n'
+              '    `Last arc generation: ${s.lastArcGenerationStatus}`,\n'
+              '    `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,\n'
+              '    "",\n',
+              'status diagnostics'
+          )
+
+          sal_path.write_text(text)
+
+          # Keep standalone hook version headers aligned.
+          for name in ['input.js', 'context.js', 'output.js']:
+              p = Path('SAL-only') / name
+              p.write_text(p.read_text().replace('v1.3.4', 'v1.3.5'))
+
+          # SAL private generation must never inherit an Inner Self stop flag.
+          for filename in ['SAL-only/context.js', 'src/context.js']:
+              p = Path(filename)
+              hook = p.read_text()
+              old = '''} else if (SAL_isBusy()) {\n  // SAL owns this private planning call.\n  if (state.InnerSelf) state.InnerSelf.agent = "";\n  sal.innerSelfTaskActive = false;\n  text = SAL_generationContext(text);\n'''
+              new = '''} else if (SAL_isBusy()) {\n  // SAL owns this private planning call.\n  if (state.InnerSelf) state.InnerSelf.agent = "";\n  sal.innerSelfTaskActive = false;\n  globalThis.stop = false;\n  text = SAL_generationContext(text);\n'''
+              hook = replace_once(hook, old, new, f'{filename}: SAL stop reset')
+              p.write_text(hook)
+
+          # Rebuild the combined Library SAL tail from the tested standalone core.
+          combined_path = Path('src/library.js')
+          combined = combined_path.read_text()
+          combined = combined.replace('Story Arc Light (SAL) v1.3.4', 'Story Arc Light (SAL) v1.3.5', 1)
+          marker = '// ============================================================================\n// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY —'
+          idx = combined.find(marker)
+          if idx < 0:
+              raise RuntimeError('combined SAL marker not found')
+          combined_path.write_text(combined[:idx] + sal_path.read_text())
+
+          # README version and reliability notes.
+          readme_path = Path('README.md')
+          readme = readme_path.read_text().replace('SAL) v1.3.4', 'SAL) v1.3.5')
+          readme = readme.replace(
+              '3. **The planning turn asks the AI for exactly 8 short future possibilities.** These are broad possibilities based on established characters, places, goals, tensions, mysteries, consequences, and unresolved threads.\n',
+              '3. **The planning turn asks the AI for exactly 8 very short future possibilities.** Each item is kept compact so all eight fit even with shorter model response settings. SAL also reserves room for its private planning prompt inside AI Dungeon\'s `info.maxChars` limit so late-story refreshes do not lose the instructions to context truncation.\n'
+          )
+          readme = readme.replace(
+              '7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player\'s action is processed normally first; SAL can refresh later on a Continue-like turn.\n',
+              '7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player\'s action is processed normally first, and SAL stays deferred until a later Continue-like turn instead of immediately scheduling itself again.\n'
+          )
+          readme = readme.replace(
+              '9. **SAL eventually creates a fresh set of possibilities.** This keeps long stories moving while allowing the plot to evolve naturally. If a planning response is malformed, SAL stops cleanly instead of entering a Continue/retry loop; it keeps the old arc and tries automatically again later.\n',
+              '9. **SAL eventually creates a fresh set of possibilities.** The parser accepts common numbered, one-line, bracketed, bullet, JSON-array, and short-line formats. If a response is still unusable, SAL stops cleanly instead of entering a Continue/retry loop, keeps the old arc, records how many items it recognized, and tries automatically again later.\n'
+          )
+          readme_path.write_text(readme)
+          PY
+
+      - name: Verify all JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check SAL-only/library.js
+          node --check SAL-only/input.js
+          node --check SAL-only/context.js
+          node --check SAL-only/output.js
+          node --check src/library.js
+          node --check src/input.js
+          node --check src/context.js
+          node --check src/output.js
+
+      - name: Test full SAL lifecycle and late refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/test-sal-135.js <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+          const assert = require('assert');
+
+          const library = fs.readFileSync('SAL-only/library.js', 'utf8');
+
+          function makeCtx() {
+            const ctx = {
+              state: {},
+              storyCards: [],
+              info: { maxChars: 5000, memoryLength: 500 },
+              console,
+              log: () => {},
+              addStoryCard(keys, entry, type) {
+                if (ctx.storyCards.some(c => String(c.keys).toLowerCase() === String(keys).toLowerCase())) return false;
+                ctx.storyCards.push({ id: ctx.storyCards.length + 1, keys, entry, type });
+                return ctx.storyCards.length - 1;
+              },
+              updateStoryCard(index, keys, entry, type) {
+                if (!ctx.storyCards[index]) throw new Error('missing card');
+                ctx.storyCards[index] = { ...ctx.storyCards[index], keys, entry, type };
+              },
+              removeStoryCard(index) { ctx.storyCards.splice(index, 1); },
+            };
+            ctx.globalThis = ctx;
+            vm.createContext(ctx);
+            vm.runInContext(library, ctx);
+            return ctx;
+          }
+
+          function eight(prefix='Beat') {
+            return Array.from({length: 8}, (_, i) => `${i + 1}. ${prefix} ${i + 1} develops naturally`).join('\n');
+          }
+
+          const ctx = makeCtx();
+          const s = ctx.state.SAL;
+          assert.strictEqual(s.version, '1.3.5');
+          assert.strictEqual(s.promptVersion, 2);
+          assert.strictEqual(s.nextArcTurn, 10);
+          assert.ok(s.prompt.includes('4 to 8 words'));
+          assert.ok(s.prompt.includes('under 80 words'));
+
+          // Parser matrix.
+          const variants = [
+            eight('Standard'),
+            Array.from({length:8},(_,i)=>`${i+1}) Paren ${i+1} moves forward`).join('\n'),
+            Array.from({length:8},(_,i)=>`${i+1}: Colon ${i+1} moves forward`).join('\n'),
+            Array.from({length:8},(_,i)=>`${i+1} - Dash ${i+1} moves forward`).join('\n'),
+            Array.from({length:8},(_,i)=>`[${i+1}] Bracket ${i+1} moves forward`).join('\n'),
+            Array.from({length:8},(_,i)=>`**${i+1}.** Bold ${i+1} moves forward`).join('\n'),
+            Array.from({length:8},(_,i)=>`${i+1}. OneLine${i+1} moves forward`).join(' '),
+            Array.from({length:8},(_,i)=>`- Bullet ${i+1} moves forward`).join('\n'),
+            JSON.stringify(Array.from({length:8},(_,i)=>`JSON ${i+1} moves forward`)),
+            Array.from({length:8},(_,i)=>`Plain ${i+1} moves forward`).join('\n'),
+          ];
+          for (const variant of variants) {
+            const parsed = ctx.SAL_extractArcResult(variant);
+            assert.strictEqual(parsed.count, 8, variant);
+            assert.ok(parsed.numbered.includes('8.'), variant);
+          }
+
+          // Turn 10 schedules the first private arc.
+          s.turn = 9;
+          s.nextArcTurn = 10;
+          s.pendingGeneration = false;
+          s.captureGeneration = false;
+          s.deferred = false;
+          const turn10 = ctx.SAL_onNormalOutput('Normal story output');
+          assert.strictEqual(s.turn, 10);
+          assert.strictEqual(ctx.SAL_isBusy(), true);
+          assert.ok(turn10.includes('will update next turn'));
+
+          // The first arc succeeds and schedules the next refresh 35 turns later.
+          const firstSaved = ctx.SAL_processGeneratedOutput(eight('First'));
+          assert.ok(firstSaved.includes('updated and saved'));
+          assert.strictEqual(s.nextArcTurn, 45);
+          assert.strictEqual(s.lastArcGenerationStatus, 'success');
+
+          // Large late-story context must make room for the entire private prompt.
+          const noisy = '<< ⚠️ Story Arc Light will update next turn. Click Continue. >>';
+          const base = 'M'.repeat(500) + 'OLD'.repeat(3000) + noisy + 'RECENT_STORY_MARKER';
+          const planned = ctx.SAL_generationContext(base);
+          assert.ok(planned.length <= ctx.info.maxChars);
+          assert.ok(planned.includes('RECENT_STORY_MARKER'));
+          assert.ok(planned.includes('Output the eight numbered lines only.'));
+          assert.ok(!planned.includes('Story Arc Light will update next turn'));
+          assert.strictEqual(s.lastPlanningContextTrimmed, true);
+
+          // A late refresh can be parsed even if the model puts all 8 items on one line.
+          s.turn = 45;
+          s.captureGeneration = true;
+          s.pendingGeneration = true;
+          const oneLine = Array.from({length:8},(_,i)=>`${i+1}. Late${i+1} changes direction`).join(' ');
+          const lateSaved = ctx.SAL_processGeneratedOutput(oneLine);
+          assert.ok(lateSaved.includes('updated and saved'));
+          assert.strictEqual(s.nextArcTurn, 80);
+
+          // Manual redo at a late turn succeeds.
+          s.turn = 78;
+          ctx.SAL_protectPlayerInput('/sal redo');
+          const redoInput = ctx.SAL_inputCommands('/sal redo');
+          assert.strictEqual(redoInput, '\u200B');
+          assert.strictEqual(s.captureGeneration, true);
+          const redoSaved = ctx.SAL_processGeneratedOutput(
+            Array.from({length:8},(_,i)=>`${i+1}: Redo${i+1} remains flexible`).join('\n')
+          );
+          assert.ok(redoSaved.includes('updated and saved'));
+          assert.strictEqual(s.nextArcTurn, 113);
+
+          // A malformed response preserves the current arc and reports the count.
+          const beforeArc = s.arc;
+          s.captureGeneration = true;
+          s.pendingGeneration = true;
+          const failed = ctx.SAL_processGeneratedOutput('1. Only one item\n2. Only two items');
+          assert.ok(failed.includes('2/8 items recognized'));
+          assert.strictEqual(s.arc, beforeArc);
+          assert.strictEqual(s.captureGeneration, false);
+          assert.strictEqual(s.lastArcGenerationStatus, 'failed (2/8 recognized)');
+
+          // Deferring an overdue refresh must not instantly schedule it again.
+          s.turn = 45;
+          s.nextArcTurn = 45;
+          s.pendingGeneration = true;
+          s.captureGeneration = true;
+          s.deferred = false;
+          ctx.SAL_protectPlayerInput('I keep playing normally.');
+          assert.strictEqual(ctx.SAL_isBusy(), false);
+          assert.strictEqual(s.deferred, true);
+          const normal = ctx.SAL_onNormalOutput('The story continues.');
+          assert.strictEqual(s.turn, 46);
+          assert.strictEqual(ctx.SAL_isBusy(), false);
+          assert.strictEqual(s.deferred, true);
+          assert.ok(!normal.includes('will update next turn'));
+          ctx.SAL_protectPlayerInput('');
+          assert.strictEqual(ctx.SAL_isBusy(), true);
+          assert.strictEqual(s.deferred, false);
+
+          // Arc injection also stays within the model context limit.
+          s.arc = ctx.SAL_softArcText(eight('Guide'));
+          const injected = ctx.SAL_injectArc(base);
+          assert.ok(injected.length <= ctx.info.maxChars);
+          assert.ok(injected.includes('<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>'));
+          assert.ok(injected.includes('RECENT_STORY_MARKER'));
+
+          // Utility outputs are removed from later model context.
+          ctx.SAL_rememberUtilityOutput('Story Arc Light 1.3.5\nEnabled: yes');
+          const cleaned = ctx.SAL_cleanContextNoise('Story text\nStory Arc Light 1.3.5\nEnabled: yes\nMore story');
+          assert.ok(!cleaned.includes('Story Arc Light 1.3.5'));
+          assert.ok(cleaned.includes('More story'));
+
+          console.log('SAL v1.3.5 full lifecycle tests passed');
+          NODE
+          node /tmp/test-sal-135.js
+
+      - name: Verify combined and standalone stay synchronized
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          sal = Path('SAL-only/library.js').read_text()
+          combined = Path('src/library.js').read_text()
+          marker = '// ============================================================================\n// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY —'
+          assert combined[combined.index(marker):] == sal[sal.index(marker):]
+
+          def body(path, marker):
+              text = Path(path).read_text()
+              return text[text.index(marker):]
+
+          assert body('src/input.js', 'SAL_protectPlayerInput') == body('SAL-only/input.js', 'SAL_protectPlayerInput')
+          assert body('src/context.js', 'globalThis.stop') == body('SAL-only/context.js', 'globalThis.stop')
+          assert body('src/output.js', 'const sal = SAL_state();') == body('SAL-only/output.js', 'const sal = SAL_state();')
+          print('Combined and SAL-only functional code match')
+          PY
+
+      - name: Commit SAL v1.3.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add SAL-only src README.md
+          git commit -m 'Fix late SAL refresh generation and parser'
+          git push
