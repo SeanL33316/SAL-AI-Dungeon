@@ -1,0 +1,241 @@
+name: SAL v1.3.2 timing and redo fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sal-v1.3.2-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply SAL v1.3.2 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          libraries = [Path('SAL-only/library.js'), Path('src/library.js')]
+
+          def replace_required(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          for path in libraries:
+              text = path.read_text()
+
+              text = text.replace('Story Arc Light (SAL) v1.3.1', 'Story Arc Light (SAL) v1.3.2')
+              text = text.replace('AI DUNGEON LIBRARY — v1.3.1', 'AI DUNGEON LIBRARY — v1.3.2')
+              text = replace_required(
+                  text,
+                  'const SAL_VERSION = "1.3.1";\n',
+                  'const SAL_VERSION = "1.3.2";\nconst SAL_INITIAL_WAIT_TURNS = 10;\nconst SAL_FAILED_RETRY_COOLDOWN = 5;\n',
+                  f'{path}: version constants'
+              )
+
+              text = replace_required(
+                  text,
+                  '  if (!Number.isFinite(s.attempt)) s.attempt = 0;\n  if (typeof s.arc !== "string") s.arc = "";\n',
+                  '  if (!Number.isFinite(s.attempt)) s.attempt = 0;\n  if (!Number.isFinite(s.nextArcTurn)) s.nextArcTurn = SAL_INITIAL_WAIT_TURNS;\n  if (!Number.isFinite(s.timingVersion)) s.timingVersion = 0;\n  if (typeof s.generationReason !== "string") s.generationReason = "";\n  if (typeof s.arc !== "string") s.arc = "";\n',
+                  f'{path}: state timing fields'
+              )
+
+              text = replace_required(
+                  text,
+                  'function SAL_isBusy() {\n  const s = SAL_state();\n  return s.enabled && (s.pendingGeneration || s.captureGeneration);\n}\n',
+                  'function SAL_isBusy() {\n  const s = SAL_state();\n  return Boolean(s.pendingGeneration || s.captureGeneration);\n}\n',
+                  f'{path}: busy state'
+              )
+
+              text = replace_required(
+                  text,
+                  '    "/sal help",\n    "/redo arc",\n    "/stop"\n',
+                  '    "/sal help",\n    "/sal redo",\n    "/sal refresh",\n    "/redo arc",\n    "/sal stop",\n    "/stop"\n',
+                  f'{path}: command aliases'
+              )
+
+              text = text.replace(
+                  '- Write exactly 8 numbered items.\n- Each item must be one concise sentence.\n',
+                  '- Write exactly 8 numbered items.\n- Each item must be one concise sentence.\n- Output exactly eight lines numbered 1. through 8.\n- Do not add a heading, introduction, explanation, or closing text.\n'
+              )
+
+              text = replace_required(
+                  text,
+                  '    "attemptLimit = " + s.attemptLimit,\n',
+                  '',
+                  f'{path}: remove retry setting'
+              )
+              text = text.replace(
+                  '    "/redo arc — generate a new arc on this turn",\n    "/stop — cancel a pending arc generation",\n',
+                  '    "/sal redo or /redo arc — generate a new arc now",\n    "/sal stop or /stop — cancel a pending arc generation",\n'
+              )
+
+              text = replace_required(
+                  text,
+                  '  match = text.match(/attemptLimit\\s*=\\s*(\\d+)/i);\n  if (match) s.attemptLimit = Math.max(1, Math.min(10, Number(match[1])));\n',
+                  '',
+                  f'{path}: remove retry parser'
+              )
+
+              old_sync = '''  const arcIndex = SAL_ensureCard(SAL_ARC_KEYS, s.arc);\n  if (arcIndex >= 0) {\n    const cardArc = String(storyCards[arcIndex]?.entry || "").trim();\n    // Respect manual user edits to the Current Story Arc card.\n    if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;\n  }\n}\n'''
+              new_sync = '''  const arcIndex = SAL_ensureCard(SAL_ARC_KEYS, s.arc);\n  let cardArc = "";\n  if (arcIndex >= 0) {\n    cardArc = String(storyCards[arcIndex]?.entry || "").trim();\n    // Respect manual user edits to the Current Story Arc card.\n    if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;\n  }\n\n  // v1.3.2 timing migration: do not surprise an existing story with an\n  // immediate refresh. New/no-arc stories wait for the 10-turn observation\n  // period; stories that already have an arc get a full refresh interval.\n  if (s.timingVersion < 2) {\n    s.nextArcTurn = cardArc\n      ? s.turn + s.turnsPerAICall\n      : Math.max(SAL_INITIAL_WAIT_TURNS, s.turn);\n    s.timingVersion = 2;\n  }\n}\n'''
+              text = replace_required(text, old_sync, new_sync, f'{path}: timing migration')
+
+              old_extract = '''function SAL_extractNumberedArc(text) {\n  const lines = String(text || "").split("\\n");\n  const items = [];\n\n  for (const raw of lines) {\n    const match = raw.trim().match(/^(\\d+)\\.\\s+(.+)/);\n    if (!match) continue;\n    const body = match[2].trim();\n    if (!body) continue;\n    items.push(body);\n  }\n\n  // SAL deliberately requires exactly eight usable items.\n  if (items.length < 8) return "";\n  return items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\\n");\n}\n'''
+              new_extract = '''function SAL_extractNumberedArc(text) {\n  const lines = String(text || "").replace(/\\r/g, "").split("\\n");\n  let items = [];\n\n  // Accept normal numbering, Markdown-bold numbering, and 1) style numbering.\n  for (const raw of lines) {\n    const match = raw.trim().match(/^(?:[-*•]\\s*)?(?:\\*\\*)?(\\d{1,2})[.)](?:\\*\\*)?\\s+(.+)/);\n    if (!match) continue;\n    const body = match[2].trim();\n    if (body) items.push(body);\n  }\n\n  // Some models occasionally return eight bullet points despite the prompt.\n  // Accept that shape too rather than forcing the player into a retry cycle.\n  if (items.length < 8) {\n    const bullets = lines\n      .map(line => line.trim().match(/^[-*•]\\s+(.+)/))\n      .filter(Boolean)\n      .map(match => match[1].trim())\n      .filter(Boolean);\n    if (bullets.length >= 8) items = bullets;\n  }\n\n  if (items.length < 8) return "";\n  return items.slice(0, 8).map((item, index) => `${index + 1}. ${item}`).join("\\n");\n}\n'''
+              text = replace_required(text, old_extract, new_extract, f'{path}: tolerant arc parser')
+
+              old_schedule = '''function SAL_scheduleIfDue() {\n  const s = SAL_state();\n  if (!s.enabled || SAL_isBusy()) return false;\n\n  const due = s.turn === 1 || (s.turnsPerAICall > 0 && s.turn % s.turnsPerAICall === 0);\n  if (!due) return false;\n\n  s.pendingGeneration = true;\n  s.captureGeneration = true;\n  s.attempt = 0;\n  return true;\n}\n'''
+              new_schedule = '''function SAL_scheduleIfDue() {\n  const s = SAL_state();\n  if (!s.enabled || SAL_isBusy()) return false;\n  if (s.turn < s.nextArcTurn) return false;\n\n  s.pendingGeneration = true;\n  s.captureGeneration = true;\n  s.generationReason = "auto";\n  s.attempt = 0;\n  return true;\n}\n'''
+              text = replace_required(text, old_schedule, new_schedule, f'{path}: 10-turn scheduler')
+
+              old_protect = '''function SAL_protectPlayerInput(inputText) {\n  const s = SAL_state();\n  const realInput = SAL_isRealPlayerInput(inputText);\n  s.realPlayerInputThisTurn = realInput;\n  s.innerSelfTaskActive = false;\n\n  if (!realInput) {\n    if (s.deferred && s.enabled && !SAL_isBusy()) {\n      s.pendingGeneration = true;\n      s.captureGeneration = true;\n      s.deferred = false;\n    }\n    return;\n  }\n\n  if (SAL_isBusy()) {\n    s.pendingGeneration = false;\n    s.captureGeneration = false;\n    s.attempt = 0;\n    s.deferred = true;\n  }\n\n  if (SAL_hasInnerSelfTask()) {\n    state.InnerSelf.agent = "";\n  }\n}\n'''
+              new_protect = '''function SAL_protectPlayerInput(inputText) {\n  const s = SAL_state();\n  const realInput = SAL_isRealPlayerInput(inputText);\n  const command = SAL_isCommand(inputText);\n  s.realPlayerInputThisTurn = realInput;\n  s.innerSelfTaskActive = false;\n\n  if (!realInput) {\n    // Only a real Continue-like empty turn resumes a deferred automatic refresh.\n    // SAL commands such as /sal status must never accidentally restart it.\n    if (!command && s.deferred && s.enabled && !SAL_isBusy()) {\n      s.pendingGeneration = true;\n      s.captureGeneration = true;\n      s.generationReason = "auto";\n      s.deferred = false;\n    }\n    return;\n  }\n\n  if (SAL_isBusy()) {\n    s.pendingGeneration = false;\n    s.captureGeneration = false;\n    s.attempt = 0;\n    s.deferred = true;\n    s.generationReason = "auto";\n  }\n\n  if (SAL_hasInnerSelfTask()) {\n    state.InnerSelf.agent = "";\n  }\n}\n'''
+              text = replace_required(text, old_protect, new_protect, f'{path}: deferred protection')
+
+              old_commands = '''  if (t === "/redo arc") {\n    if (!s.enabled) {\n      s.pendingMessage = "SAL is disabled. Set enabled = true in the SAL Settings Story Card.";\n      return " ";\n    }\n    s.pendingGeneration = true;\n    s.captureGeneration = true;\n    s.deferred = false;\n    s.attempt = 0;\n    return " ";\n  }\n\n  if (t === "/stop") {\n    if (SAL_isBusy() || s.deferred) {\n      s.pendingGeneration = false;\n      s.captureGeneration = false;\n      s.deferred = false;\n      s.attempt = 0;\n      s.pendingMessage = "Story Arc Light generation stopped.";\n      return " ";\n    }\n  }\n'''
+              new_commands = '''  if (t === "/sal redo" || t === "/sal refresh" || t === "/redo arc") {\n    if (!s.enabled) {\n      s.pendingMessage = "SAL is disabled. Set enabled = true in the SAL Settings Story Card.";\n      return " ";\n    }\n    s.pendingGeneration = true;\n    s.captureGeneration = true;\n    s.generationReason = "manual";\n    s.deferred = false;\n    s.attempt = 0;\n    return " ";\n  }\n\n  if (t === "/sal stop" || t === "/stop") {\n    if (SAL_isBusy() || s.deferred) {\n      s.pendingGeneration = false;\n      s.captureGeneration = false;\n      s.deferred = false;\n      s.generationReason = "";\n      s.attempt = 0;\n      s.pendingMessage = "Story Arc Light generation stopped.";\n      return " ";\n    }\n  }\n'''
+              text = replace_required(text, old_commands, new_commands, f'{path}: redo aliases')
+
+              old_process = '''function SAL_processGeneratedOutput(outputText) {\n  const s = SAL_state();\n  const numbered = SAL_extractNumberedArc(outputText);\n\n  if (numbered) {\n    s.arc = SAL_softArcText(numbered);\n    s.pendingGeneration = false;\n    s.captureGeneration = false;\n    s.attempt = 0;\n    s.deferred = false;\n    SAL_saveArc();\n    return "<< ✅ Story Arc Light updated and saved. Click 'Continue'. >>";\n  }\n\n  if (s.attempt < s.attemptLimit) {\n    s.attempt += 1;\n    s.pendingGeneration = true;\n    s.captureGeneration = true;\n    return `<< ⏳ Story Arc Light retry ${s.attempt}/${s.attemptLimit}. Click 'Continue' or type '/stop'. >>`;\n  }\n\n  s.pendingGeneration = false;\n  s.captureGeneration = false;\n  s.attempt = 0;\n  return "<< 🧱 Story Arc Light could not build a valid arc. Keeping the current arc. Type '/redo arc' to retry. >>";\n}\n'''
+              new_process = '''function SAL_processGeneratedOutput(outputText) {\n  const s = SAL_state();\n  const numbered = SAL_extractNumberedArc(outputText);\n\n  if (numbered) {\n    s.arc = SAL_softArcText(numbered);\n    s.pendingGeneration = false;\n    s.captureGeneration = false;\n    s.attempt = 0;\n    s.deferred = false;\n    s.generationReason = "";\n    s.nextArcTurn = s.turn + s.turnsPerAICall;\n    SAL_saveArc();\n    return "<< ✅ Story Arc Light updated and saved. Continue playing normally. >>";\n  }\n\n  // Do not enter an automatic Continue/retry loop. Keep the old arc, clear the\n  // private generation state, and give automatic SAL a short cooldown. The\n  // player can always use /sal redo again immediately if they want to retry.\n  const hadArc = Boolean(String(s.arc || "").trim());\n  s.pendingGeneration = false;\n  s.captureGeneration = false;\n  s.attempt = 0;\n  s.deferred = false;\n  s.generationReason = "";\n  s.nextArcTurn = Math.max(s.nextArcTurn, s.turn + SAL_FAILED_RETRY_COOLDOWN);\n\n  return hadArc\n    ? "<< ⚠️ Story Arc Light could not build a valid 8-part arc this time. The existing arc was kept. Continue playing normally, or use '/sal redo' to try again. >>"\n    : "<< ⚠️ Story Arc Light could not build a valid 8-part arc this time. No arc was saved. Continue playing normally; SAL will try again later, or use '/sal redo' to try again now. >>";\n}\n'''
+              text = replace_required(text, old_process, new_process, f'{path}: no-loop generation')
+
+              text = text.replace(
+                  '    `Refresh every: ${s.turnsPerAICall} turns`,\n',
+                  '    `First automatic arc: after ${SAL_INITIAL_WAIT_TURNS} story turns`,\n    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,\n    `Next automatic arc check: story turn ${s.nextArcTurn}`,\n'
+              )
+
+              path.write_text(text)
+
+          # Bump SAL-only hook banners. Combined hooks intentionally remain compact.
+          for name in ['input.js', 'context.js', 'output.js']:
+              p = Path('SAL-only') / name
+              p.write_text(p.read_text().replace('v1.3.1', 'v1.3.2'))
+
+          # README documentation.
+          p = Path('README.md')
+          text = p.read_text()
+          text = text.replace('SAL) v1.3.1', 'SAL) v1.3.2')
+          text = text.replace(
+              '2. **When an arc refresh is due, SAL schedules a private planning turn.** The default refresh interval is every **35 story turns**.',
+              '2. **SAL observes the opening before making its first arc.** The first automatic Story Arc is scheduled only after **10 normal story turns**. After an arc is saved, the next automatic refresh is **35 story turns later** by default.'
+          )
+          text = text.replace(
+              '9. **SAL eventually creates a fresh set of possibilities.** This keeps long stories moving while allowing the plot to evolve naturally.',
+              '9. **SAL eventually creates a fresh set of possibilities.** This keeps long stories moving while allowing the plot to evolve naturally. If a planning response is malformed, SAL stops cleanly instead of entering a Continue/retry loop; it keeps the old arc and tries automatically again later.'
+          )
+          text = text.replace(
+              '- Refreshes the arc every **35 story turns** by default.',
+              '- Waits **10 normal story turns** before the first automatic Story Arc.\n- Refreshes **35 story turns after the last saved arc** by default.'
+          )
+          text = text.replace(
+              '- `/redo arc` — request a fresh Story Arc.\n- `/stop` — cancel a pending SAL generation.',
+              '- `/sal redo` or `/redo arc` — request a fresh Story Arc immediately.\n- `/sal stop` or `/stop` — cancel a pending SAL generation.'
+          )
+          p.write_text(text)
+          PY
+
+      - name: Verify JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check SAL-only/library.js
+          node --check SAL-only/input.js
+          node --check SAL-only/context.js
+          node --check SAL-only/output.js
+          node --check src/library.js
+          node --check src/input.js
+          node --check src/context.js
+          node --check src/output.js
+
+      - name: Run SAL behavior tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+
+          const code = fs.readFileSync('SAL-only/library.js', 'utf8');
+          const sandbox = {
+            state: {},
+            storyCards: [],
+            log: () => {},
+            addStoryCard(keys, entry, type) {
+              this.storyCards.push({ keys, entry, type });
+              return this.storyCards.length - 1;
+            },
+            updateStoryCard(index, keys, entry, type) {
+              this.storyCards[index] = { keys, entry, type };
+              return true;
+            }
+          };
+          sandbox.globalThis = sandbox;
+          vm.createContext(sandbox);
+          vm.runInContext(code, sandbox);
+
+          function assert(value, message) {
+            if (!value) throw new Error(message);
+          }
+
+          assert(sandbox.state.SAL.nextArcTurn === 10, 'first automatic arc must wait 10 turns');
+          for (let i = 1; i <= 9; i++) {
+            const out = sandbox.SAL_onNormalOutput('story ' + i);
+            assert(!sandbox.SAL_isBusy(), 'SAL scheduled too early on turn ' + i);
+            assert(!out.includes('will update next turn'), 'warning appeared too early');
+          }
+
+          const turn10 = sandbox.SAL_onNormalOutput('story 10');
+          assert(sandbox.state.SAL.turn === 10, 'turn counter should be 10');
+          assert(sandbox.SAL_isBusy(), 'SAL should schedule after turn 10');
+          assert(turn10.includes('will update next turn'), 'turn 10 should warn about planning');
+
+          sandbox.SAL_generationContext('context');
+          const valid = Array.from({length: 8}, (_, i) => `${i + 1}. possibility ${i + 1}`).join('\n');
+          const saved = sandbox.SAL_processGeneratedOutput(valid);
+          assert(saved.includes('updated and saved'), 'valid arc should save');
+          assert(!sandbox.SAL_isBusy(), 'successful generation must clear busy state');
+          assert(sandbox.state.SAL.nextArcTurn === 45, 'next auto refresh should be 35 story turns later');
+
+          sandbox.SAL_inputCommands('/sal redo');
+          assert(sandbox.SAL_isBusy(), '/sal redo must start manual generation');
+          assert(sandbox.state.SAL.generationReason === 'manual', 'manual redo reason missing');
+          const failed = sandbox.SAL_processGeneratedOutput('this is not an eight-part arc');
+          assert(!sandbox.SAL_isBusy(), 'failed redo must clear busy state');
+          assert(!failed.toLowerCase().includes('click') && !failed.toLowerCase().includes('retry 1/'), 'failed redo must not ask for Continue/retry loop');
+          assert(sandbox.state.SAL.nextArcTurn >= 15, 'failed generation should have cooldown');
+
+          sandbox.state.SAL.deferred = true;
+          sandbox.SAL_protectPlayerInput('/sal status');
+          assert(!sandbox.SAL_isBusy(), '/sal status must not resume deferred planning');
+          assert(sandbox.state.SAL.deferred === true, 'status should leave deferred refresh deferred');
+
+          const bullets = Array.from({length: 8}, (_, i) => `- possibility ${i + 1}`).join('\n');
+          assert(Boolean(sandbox.SAL_extractNumberedArc(bullets)), 'eight bullets should be accepted');
+
+          console.log('SAL v1.3.2 behavior tests passed');
+          NODE
+
+      - name: Commit SAL v1.3.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add SAL-only src README.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'SAL v1.3.2: add 10-turn wait and fix redo loop'
+          git push
