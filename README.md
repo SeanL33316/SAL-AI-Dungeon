@@ -25,20 +25,20 @@ Use the files in `src/`:
 
 ```text
 src/
-├── library.js
-├── input.js
-├── context.js
-└── output.js
+├── 1-Library.js
+├── 2-Input.js
+├── 3-Context.js
+└── 4-Output.js
 ```
 
 These four files are already combined and coordinated for **Inner Self + SAL**. The Library contains the core code once, while Input, Context, and Output are short coordination hooks.
 
 ### Install
 
-1. Copy all of `src/library.js` into AI Dungeon's **Library** tab.
-2. Copy all of `src/input.js` into the **Input** tab.
-3. Copy all of `src/context.js` into the **Context** tab.
-4. Copy all of `src/output.js` into the **Output** tab.
+1. Copy all of `src/1-Library.js` into AI Dungeon's **Library** tab.
+2. Copy all of `src/2-Input.js` into the **Input** tab.
+3. Copy all of `src/3-Context.js` into the **Context** tab.
+4. Copy all of `src/4-Output.js` into the **Output** tab.
 5. Save and make sure **Scripts** are enabled.
 
 Replace the contents of those tabs rather than adding a second set of modifier wrappers.
@@ -49,10 +49,10 @@ If you want **Story Arc Light without Inner Self**, use the separate `SAL-only/`
 
 ```text
 SAL-only/
-├── library.js
-├── input.js
-├── context.js
-└── output.js
+├── 1-Library.js
+├── 2-Input.js
+├── 3-Context.js
+└── 4-Output.js
 ```
 
 Copy each file into the matching AI Dungeon scripting tab exactly the same way.
