@@ -5,7 +5,15 @@
 
 const sal = SAL_state();
 
-if (sal.captureGeneration) {
+if (sal.commandPending) {
+  // Swallow the unavoidable Phoenix command generation. Do not advance SAL's
+  // story counter and do not let Inner Self consume this utility turn.
+  text = String(sal.commandResponse || "SAL command completed.");
+  sal.commandPending = false;
+  sal.commandResponse = "";
+  sal.realPlayerInputThisTurn = false;
+  sal.innerSelfTaskActive = false;
+} else if (sal.captureGeneration) {
   // This model output is SAL's private eight-beat planning response.
   if (state.InnerSelf) state.InnerSelf.agent = "";
   text = SAL_processGeneratedOutput(text);

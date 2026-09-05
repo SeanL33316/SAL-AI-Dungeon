@@ -6,7 +6,15 @@
 globalThis.stop ??= false;
 const sal = SAL_state();
 
-if (SAL_isBusy()) {
+if (sal.commandPending) {
+  // Phoenix has no clean no-model command path: stop:true throws an error and
+  // state.message is not implemented. Use one tiny hidden model call, then
+  // replace its Output with the command response.
+  if (state.InnerSelf) state.InnerSelf.agent = "";
+  sal.innerSelfTaskActive = false;
+  globalThis.stop = false;
+  text = "SAL utility command. Reply with OK only.";
+} else if (SAL_isBusy()) {
   // SAL owns this private planning call.
   if (state.InnerSelf) state.InnerSelf.agent = "";
   sal.innerSelfTaskActive = false;

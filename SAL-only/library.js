@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.3
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.4
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,7 +9,7 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.3";
+const SAL_VERSION = "1.3.4";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_FAILED_RETRY_COOLDOWN = 5;
 const SAL_SETTINGS_KEYS = "SAL Settings";
@@ -42,6 +42,8 @@ function SAL_state() {
   if (typeof s.inputStop !== "boolean") s.inputStop = false;
   if (typeof s.commandMessageActive !== "boolean") s.commandMessageActive = false;
   if (typeof s.commandMessage !== "string") s.commandMessage = "";
+  if (typeof s.commandPending !== "boolean") s.commandPending = false;
+  if (typeof s.commandResponse !== "string") s.commandResponse = "";
   if (typeof s.prompt !== "string" || !s.prompt.trim()) s.prompt = SAL_defaultPrompt();
   s.version = SAL_VERSION;
   return s;
@@ -279,7 +281,7 @@ function SAL_syncCards() {
     if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
   }
 
-  // v1.3.3 timing migration: do not surprise an existing story with an
+  // v1.3.4 timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
@@ -374,14 +376,12 @@ function SAL_scheduleIfDue() {
 function SAL_protectPlayerInput(inputText) {
   const s = SAL_state();
 
-  // Clear only a previous SAL-owned command message. Never erase messages
-  // created by another script such as Inner Self or Auto-Cards.
-  if (s.commandMessageActive && state.message === s.commandMessage) {
-    delete state.message;
-  }
+  // Recover cleanly if a previous command turn was interrupted before Output.
+  s.commandPending = false;
+  s.commandResponse = "";
+  s.inputStop = false; // legacy v1.3.3 state; no longer used on Phoenix
   s.commandMessageActive = false;
   s.commandMessage = "";
-  s.inputStop = false;
 
   const realInput = SAL_isRealPlayerInput(inputText);
   const command = SAL_isCommand(inputText);
@@ -390,7 +390,7 @@ function SAL_protectPlayerInput(inputText) {
 
   if (!realInput) {
     // Only a real Continue-like empty turn resumes a deferred automatic refresh.
-    // SAL commands such as /sal status must never accidentally restart it.
+    // SAL commands must never accidentally restart it.
     if (!command && s.deferred && s.enabled && !SAL_isBusy()) {
       s.pendingGeneration = true;
       s.captureGeneration = true;
@@ -413,13 +413,15 @@ function SAL_protectPlayerInput(inputText) {
   }
 }
 
-function SAL_setCommandMessage(message) {
+function SAL_queueDisplayCommand(message) {
   const s = SAL_state();
-  const clean = String(message || "");
-  s.inputStop = true;
-  s.commandMessage = clean;
-  s.commandMessageActive = true;
-  state.message = clean;
+  s.commandPending = true;
+  s.commandResponse = String(message || "SAL command completed.");
+  s.realPlayerInputThisTurn = false;
+  s.innerSelfTaskActive = false;
+  // Phoenix currently errors on empty Input text and on stop:true. A zero-width
+  // character is a valid non-empty placeholder and is swallowed on Output.
+  return "\u200B";
 }
 
 function SAL_inputCommands(inputText) {
@@ -428,27 +430,28 @@ function SAL_inputCommands(inputText) {
 
   if (t === "/sal" || t === "/sal status") {
     s.showStatus = false;
-    SAL_setCommandMessage(SAL_statusText());
-    return null;
+    return SAL_queueDisplayCommand(SAL_statusText());
   }
 
   if (t === "/sal help") {
     s.showStatus = false;
-    SAL_setCommandMessage(SAL_helpText());
-    return null;
+    return SAL_queueDisplayCommand(SAL_helpText());
   }
 
   if (t === "/sal redo" || t === "/sal refresh" || t === "/redo arc") {
     if (!s.enabled) {
-      s.pendingMessage = "SAL is disabled. Set enabled = true in the SAL Settings Story Card.";
-      return " ";
+      return SAL_queueDisplayCommand(
+        "SAL is disabled. Set enabled = true in the SAL Settings Story Card."
+      );
     }
+    s.commandPending = false;
+    s.commandResponse = "";
     s.pendingGeneration = true;
     s.captureGeneration = true;
     s.generationReason = "manual";
     s.deferred = false;
     s.attempt = 0;
-    return " ";
+    return "\u200B";
   }
 
   if (t === "/sal stop" || t === "/stop") {
@@ -459,12 +462,11 @@ function SAL_inputCommands(inputText) {
     s.generationReason = "";
     s.attempt = 0;
     s.pendingMessage = "";
-    SAL_setCommandMessage(
+    return SAL_queueDisplayCommand(
       wasPending
         ? "Story Arc Light generation stopped."
         : "No Story Arc Light generation is currently pending."
     );
-    return null;
   }
 
   return inputText;
@@ -569,7 +571,7 @@ function SAL_helpText() {
   return [
     `Story Arc Light ${SAL_VERSION} commands`,
     "",
-    "/sal or /sal status — show SAL status without advancing the story",
+    "/sal or /sal status — show SAL status without advancing SAL story turns",
     "/sal help — show this command list",
     "/sal redo or /sal refresh or /redo arc — generate a fresh arc now",
     "/sal stop or /stop — cancel a pending SAL generation"
