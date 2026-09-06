@@ -17,7 +17,7 @@ The combined version is the main package in `src/`. Each file is complete for it
   The original story-arc system that Story Arc Light was developed from.  
   Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Light (SAL) v1.3.6** is the lighter, player-first story-arc version used in this repository.
+**Story Arc Light (SAL) v1.3.7** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -69,7 +69,7 @@ SAL gives a long-running story direction without treating an outline as a fixed 
 6. **Player input always wins.** If the player chooses something that conflicts with an arc idea, SAL tells the AI to delay, change, replace, or discard that idea instead of overriding the player.
 7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player's action is processed normally first, and SAL stays deferred until a later Continue-like turn instead of immediately scheduling itself again.
 8. **The arc gradually moves forward.** By default SAL removes one older possibility every **5 turns**, preventing the list from becoming a permanent checklist.
-9. **SAL eventually creates a fresh set of possibilities.** The parser accepts common numbered, one-line, bracketed, bullet, JSON-array, and short-line formats. SAL saves any useful partial result containing **5–8 possibilities** instead of demanding a perfect 8/8. If fewer than 5 usable possibilities are returned, SAL keeps the old arc and waits the full normal refresh interval—there is no automatic retry loop.
+9. **SAL eventually creates a fresh set of possibilities.** The parser accepts common numbered, one-line, bracketed, bullet, JSON-array, and short-line formats. SAL saves any useful partial result containing **5–8 possibilities** instead of demanding a perfect 8/8. The private planning prompt uses a dedicated system-task block, and failed generations retain a short raw-output diagnostic visible through `/sal status` so 0-item failures can be identified instead of hidden. If fewer than 5 usable possibilities are returned, SAL keeps the old arc and waits the full normal refresh interval—there is no automatic retry loop.
 
 The goal is not to predict exactly what must happen. SAL gives the AI a handful of possible directions so the story can develop over time without rushing or railroading the player.
 

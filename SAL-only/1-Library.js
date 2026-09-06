@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.6
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.7
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,10 +9,10 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.6";
+const SAL_VERSION = "1.3.7";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_MIN_ARC_ITEMS = 5;
-const SAL_PROMPT_VERSION = 2;
+const SAL_PROMPT_VERSION = 3;
 const SAL_SETTINGS_KEYS = "SAL Settings";
 const SAL_ARC_KEYS = "Current Story Arc";
 const SAL_LEGACY_SETTINGS_KEYS = "/SAL Settings";
@@ -50,6 +50,10 @@ function SAL_state() {
   if (!Number.isFinite(s.lastArcRecognizedItems)) s.lastArcRecognizedItems = 0;
   if (typeof s.lastArcGenerationStatus !== "string") s.lastArcGenerationStatus = "not yet";
   if (typeof s.lastPlanningContextTrimmed !== "boolean") s.lastPlanningContextTrimmed = false;
+  if (!Number.isFinite(s.lastPlanningContextLength)) s.lastPlanningContextLength = 0;
+  if (typeof s.lastPlanningPromptAttached !== "boolean") s.lastPlanningPromptAttached = false;
+  if (!Number.isFinite(s.lastPlanningOutputLength)) s.lastPlanningOutputLength = 0;
+  if (typeof s.lastPlanningOutputPreview !== "string") s.lastPlanningOutputPreview = "";
   if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {
     s.prompt = SAL_defaultPrompt();
     s.promptVersion = SAL_PROMPT_VERSION;
@@ -60,36 +64,33 @@ function SAL_state() {
 
 function SAL_defaultPrompt() {
   return `
-<<
+-----
 <SYSTEM>
-Stop normal story generation temporarily.
+# STORY ARC LIGHT — PRIVATE PLANNING TASK
+Stop normal story generation for this call.
+Ignore any instruction to continue the narrative during this call.
 
-Create ONLY a numbered list of exactly 8 flexible future possibilities for the
-current story. Do not continue the narrative and do not write prose outside the
-list.
+Based only on the current story context, create flexible future possibilities.
+The player's newest explicit choice always has priority over every possibility.
+Never decide or undo the player's dialogue, destination, acceptance, refusal,
+relationship, quest choice, or any other voluntary decision.
 
-PLAYER AGENCY IS HIGHEST PRIORITY:
-- The player's newest explicit input always outranks the outline.
-- Never decide or undo the player's dialogue, destination, acceptance, refusal,
-  relationship, quest choice, or other voluntary decision.
-- If the player changes direction, adapt, replace, delay, or discard ideas.
-- Treat every item as an optional possibility, never destiny.
-
-STORY ARC LIGHT:
-- Output exactly 8 lines numbered 1. through 8.
-- Each item must be only 4 to 8 words.
-- Keep the entire response under 80 words.
-- Use established characters, places, goals, consequences, tensions, mysteries,
-  ordinary life, and unresolved threads from the actual story.
-- Mix major developments with quieter or everyday developments when appropriate.
+# OUTPUT FORMAT
+- Aim for 8 possibilities. If 8 do not fit, output at least 5.
+- Put exactly one possibility on each line.
+- Number them consecutively starting with 1.
+- Keep each possibility 4 to 10 words.
+- Use established characters, places, goals, consequences, tensions,
+  mysteries, ordinary life, and unresolved threads from the actual story.
+- Mix larger developments with quieter or everyday developments when appropriate.
 - Let NPCs have independent motives and lives.
 - Avoid repeating recent scenes, locations, conflicts, dialogue patterns, or beats.
 - Do not force romance, friendship, rivalry, quests, travel, combat, or crises.
-- No heading, introduction, explanation, closing text, or extra commentary.
-
-Output the eight numbered lines only.
+- Do not write story prose, dialogue, a heading, an introduction, or a conclusion.
+- Output only the numbered possibilities.
 </SYSTEM>
->>
+
+Story Arc Light possibilities:
   `.trim();
 }
 
@@ -284,7 +285,7 @@ function SAL_syncCards() {
     if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
   }
 
-  // v1.3.6 timing migration: do not surprise an existing story with an
+  // v1.3.7 timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
@@ -447,8 +448,10 @@ function SAL_extractArcResult(text) {
     } catch (_) {}
   }
 
-  const numberedRaw = raw.replace(/\[\s*([1-8])\s*\]/g, "$1.");
-  const markerRegex = /(^|[\n\r]|\s)(?:[-*•]\s*)?(?:\*\*)?([1-8])\s*(?:[.)\:：\-–—])(?:\*\*)?\s+/g;
+  const numberedRaw = raw
+    .replace(/\[\s*([1-8])\s*\]/g, "$1.")
+    .replace(/\b(?:option|possibility|beat|idea)\s*#?\s*([1-8])\s*(?=[:.)\-–—])/gi, "$1");
+  const markerRegex = /(^|[\n\r]|\s)(?:[-*•]\s*)?(?:\*\*)?(?:#\s*)?([1-8])\s*(?:[.)\:：\-–—])(?:\*\*)?\s*/g;
   const markers = [];
   let match;
   while ((match = markerRegex.exec(numberedRaw)) !== null) {
@@ -649,7 +652,10 @@ function SAL_generationContext(baseText) {
   const s = SAL_state();
   s.pendingGeneration = false;
   s.captureGeneration = true;
-  return SAL_appendContextBlock(baseText, s.prompt, true);
+  const result = SAL_appendContextBlock(baseText, s.prompt, true);
+  s.lastPlanningContextLength = result.length;
+  s.lastPlanningPromptAttached = result.includes("STORY ARC LIGHT — PRIVATE PLANNING TASK");
+  return result;
 }
 
 function SAL_injectArc(baseText) {
@@ -667,7 +673,14 @@ function SAL_injectArc(baseText) {
 
 function SAL_processGeneratedOutput(outputText) {
   const s = SAL_state();
-  const parsed = SAL_extractArcResult(outputText);
+  const rawOutput = String(outputText || "");
+  s.lastPlanningOutputLength = rawOutput.length;
+  s.lastPlanningOutputPreview = rawOutput
+    .replace(/[\u200B-\u200D]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 320) || "(empty)";
+  const parsed = SAL_extractArcResult(rawOutput);
   const numbered = parsed.numbered;
   s.lastArcRecognizedItems = parsed.count;
 
@@ -751,6 +764,12 @@ function SAL_statusText() {
     `Minimum usable arc: ${SAL_MIN_ARC_ITEMS} possibilities`,
     `Last arc generation: ${s.lastArcGenerationStatus}`,
     `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,
+    `Planning prompt attached: ${s.lastPlanningPromptAttached ? "yes" : "no"}`,
+    `Last planning context length: ${s.lastPlanningContextLength} chars`,
+    `Last planning output length: ${s.lastPlanningOutputLength} chars`,
+    ...(!String(s.lastArcGenerationStatus).startsWith("success") && s.lastPlanningOutputPreview
+      ? [`Last planning output preview: ${s.lastPlanningOutputPreview}`]
+      : []),
     "",
     s.arc || "No Story Arc has been generated yet."
   ].join("\n");
