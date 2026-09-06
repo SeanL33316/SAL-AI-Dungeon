@@ -1,0 +1,246 @@
+name: SAL v1.3.7 zero-output fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sal-v1.3.7-zero-output-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply SAL v1.3.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_between(text, start_marker, end_marker, new_block, label):
+              start = text.find(start_marker)
+              if start < 0:
+                  raise RuntimeError(f'{label}: start marker missing')
+              end = text.find(end_marker, start)
+              if end < 0:
+                  raise RuntimeError(f'{label}: end marker missing')
+              return text[:start] + new_block.rstrip() + '\n\n' + text[end:]
+
+          new_prompt = r'''function SAL_defaultPrompt() {
+            return `
+          -----
+          <SYSTEM>
+          # STORY ARC LIGHT — PRIVATE PLANNING TASK
+          Stop normal story generation for this call.
+          Ignore any instruction to continue the narrative during this call.
+
+          Based only on the current story context, create flexible future possibilities.
+          The player's newest explicit choice always has priority over every possibility.
+          Never decide or undo the player's dialogue, destination, acceptance, refusal,
+          relationship, quest choice, or any other voluntary decision.
+
+          # OUTPUT FORMAT
+          - Aim for 8 possibilities. If 8 do not fit, output at least 5.
+          - Put exactly one possibility on each line.
+          - Number them consecutively starting with 1.
+          - Keep each possibility 4 to 10 words.
+          - Use established characters, places, goals, consequences, tensions,
+            mysteries, ordinary life, and unresolved threads from the actual story.
+          - Mix larger developments with quieter or everyday developments when appropriate.
+          - Let NPCs have independent motives and lives.
+          - Avoid repeating recent scenes, locations, conflicts, dialogue patterns, or beats.
+          - Do not force romance, friendship, rivalry, quests, travel, combat, or crises.
+          - Do not write story prose, dialogue, a heading, an introduction, or a conclusion.
+          - Output only the numbered possibilities.
+          </SYSTEM>
+
+          Story Arc Light possibilities:
+            `.trim();
+          }'''
+
+          new_generation = r'''function SAL_generationContext(baseText) {
+            const s = SAL_state();
+            s.pendingGeneration = false;
+            s.captureGeneration = true;
+            const result = SAL_appendContextBlock(baseText, s.prompt, true);
+            s.lastPlanningContextLength = result.length;
+            s.lastPlanningPromptAttached = result.includes("STORY ARC LIGHT — PRIVATE PLANNING TASK");
+            return result;
+          }'''
+
+          for file_name in ['SAL-only/1-Library.js', 'src/1-Library.js']:
+              path = Path(file_name)
+              text = path.read_text()
+              text = text.replace('v1.3.6', 'v1.3.7')
+              text = text.replace('const SAL_VERSION = "1.3.6";', 'const SAL_VERSION = "1.3.7";')
+              text = text.replace('const SAL_PROMPT_VERSION = 2;', 'const SAL_PROMPT_VERSION = 3;')
+
+              old_state = '  if (typeof s.lastPlanningContextTrimmed !== "boolean") s.lastPlanningContextTrimmed = false;\n'
+              new_state = old_state + (
+                  '  if (!Number.isFinite(s.lastPlanningContextLength)) s.lastPlanningContextLength = 0;\n'
+                  '  if (typeof s.lastPlanningPromptAttached !== "boolean") s.lastPlanningPromptAttached = false;\n'
+                  '  if (!Number.isFinite(s.lastPlanningOutputLength)) s.lastPlanningOutputLength = 0;\n'
+                  '  if (typeof s.lastPlanningOutputPreview !== "string") s.lastPlanningOutputPreview = "";\n'
+              )
+              if old_state not in text:
+                  raise RuntimeError(file_name + ': state marker missing')
+              text = text.replace(old_state, new_state, 1)
+
+              text = replace_between(text, 'function SAL_defaultPrompt() {', 'function SAL_hasInnerSelf() {', new_prompt, file_name + ' prompt')
+              text = replace_between(text, 'function SAL_generationContext(baseText) {', 'function SAL_injectArc(baseText) {', new_generation, file_name + ' generation')
+
+              old_numbered = '  const numberedRaw = raw.replace(/\\[\\s*([1-8])\\s*\\]/g, "$1.");\n'
+              new_numbered = (
+                  '  const numberedRaw = raw\n'
+                  '    .replace(/\\[\\s*([1-8])\\s*\\]/g, "$1.")\n'
+                  '    .replace(/\\b(?:option|possibility|beat|idea)\\s*#?\\s*([1-8])\\s*(?=[:.)\\-–—])/gi, "$1");\n'
+              )
+              if old_numbered not in text:
+                  raise RuntimeError(file_name + ': numbered parser marker missing')
+              text = text.replace(old_numbered, new_numbered, 1)
+
+              old_regex = '  const markerRegex = /(^|[\\n\\r]|\\s)(?:[-*•]\\s*)?(?:\\*\\*)?([1-8])\\s*(?:[.)\\:：\\-–—])(?:\\*\\*)?\\s+/g;\n'
+              new_regex = '  const markerRegex = /(^|[\\n\\r]|\\s)(?:[-*•]\\s*)?(?:\\*\\*)?(?:#\\s*)?([1-8])\\s*(?:[.)\\:：\\-–—])(?:\\*\\*)?\\s*/g;\n'
+              if old_regex not in text:
+                  raise RuntimeError(file_name + ': marker regex missing')
+              text = text.replace(old_regex, new_regex, 1)
+
+              old_process = '''function SAL_processGeneratedOutput(outputText) {\n  const s = SAL_state();\n  const parsed = SAL_extractArcResult(outputText);'''
+              new_process = '''function SAL_processGeneratedOutput(outputText) {\n  const s = SAL_state();\n  const rawOutput = String(outputText || "");\n  s.lastPlanningOutputLength = rawOutput.length;\n  s.lastPlanningOutputPreview = rawOutput\n    .replace(/[\\u200B-\\u200D]+/g, "")\n    .replace(/\\s+/g, " ")\n    .trim()\n    .slice(0, 320) || "(empty)";\n  const parsed = SAL_extractArcResult(rawOutput);'''
+              if old_process not in text:
+                  raise RuntimeError(file_name + ': process marker missing')
+              text = text.replace(old_process, new_process, 1)
+
+              old_status = '    `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,\n    "",\n'
+              new_status = (
+                  '    `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,\n'
+                  '    `Planning prompt attached: ${s.lastPlanningPromptAttached ? "yes" : "no"}`,\n'
+                  '    `Last planning context length: ${s.lastPlanningContextLength} chars`,\n'
+                  '    `Last planning output length: ${s.lastPlanningOutputLength} chars`,\n'
+                  '    ...(!String(s.lastArcGenerationStatus).startsWith("success") && s.lastPlanningOutputPreview\n'
+                  '      ? [`Last planning output preview: ${s.lastPlanningOutputPreview}`]\n'
+                  '      : []),\n'
+                  '    "",\n'
+              )
+              if old_status not in text:
+                  raise RuntimeError(file_name + ': status marker missing')
+              text = text.replace(old_status, new_status, 1)
+              path.write_text(text)
+
+          for file_name in [
+              'SAL-only/2-Input.js', 'SAL-only/3-Context.js', 'SAL-only/4-Output.js',
+              'src/2-Input.js', 'src/3-Context.js', 'src/4-Output.js'
+          ]:
+              path = Path(file_name)
+              path.write_text(path.read_text().replace('v1.3.6', 'v1.3.7'))
+
+          readme = Path('README.md')
+          text = readme.read_text().replace('v1.3.6', 'v1.3.7')
+          needle = 'SAL saves any useful partial result containing **5–8 possibilities** instead of demanding a perfect 8/8.'
+          replacement = needle + ' The private planning prompt uses a dedicated system-task block, and failed generations retain a short raw-output diagnostic visible through `/sal status` so 0-item failures can be identified instead of hidden.'
+          if needle in text:
+              text = text.replace(needle, replacement, 1)
+          readme.write_text(text)
+          PY
+
+      - name: Verify JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in SAL-only/1-Library.js SAL-only/2-Input.js SAL-only/3-Context.js SAL-only/4-Output.js src/1-Library.js src/2-Input.js src/3-Context.js src/4-Output.js; do
+            node --check "$f"
+          done
+
+      - name: Test zero-output hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+          const assert = require('assert');
+
+          global.state = {};
+          global.storyCards = [];
+          global.history = [];
+          global.info = { maxChars: 6000, memoryLength: 500, actionCount: 100 };
+          global.log = () => {};
+          global.addStoryCard = (keys, entry, type) => {
+            storyCards.push({ keys, entry, type, title: keys, description: '' });
+            return storyCards.length - 1;
+          };
+          global.updateStoryCard = (index, keys, entry, type) => {
+            storyCards[index] = { ...storyCards[index], keys, entry, type };
+          };
+          global.removeStoryCard = index => storyCards.splice(index, 1);
+
+          vm.runInThisContext(fs.readFileSync('SAL-only/1-Library.js', 'utf8'));
+          assert.equal(SAL_VERSION, '1.3.7');
+          assert.equal(SAL_state().promptVersion, 3);
+          assert.ok(SAL_state().prompt.includes('PRIVATE PLANNING TASK'));
+          assert.ok(!SAL_state().prompt.startsWith('<<'));
+
+          function standard(n) {
+            return Array.from({length:n}, (_,i) => `${i+1}. possibility ${i+1} develops naturally`).join('\n');
+          }
+          assert.equal(SAL_extractArcResult(standard(5)).count, 5);
+          assert.equal(SAL_extractArcResult('Option 1:Meet coworkers\nOption 2:Explore district\nOption 3:Handle client issue\nOption 4:Meet neighbor\nOption 5:Weekend outing').count, 5);
+          assert.equal(SAL_extractArcResult('1)Meet coworkers\n2)Explore district\n3)Handle client issue\n4)Meet neighbor\n5)Weekend outing').count, 5);
+          assert.equal(SAL_extractArcResult('You step outside and head toward the station. The morning is quiet.').count, 0);
+
+          const base = 'M'.repeat(500) + 'Recent Story:\n' + 'story '.repeat(900);
+          const planned = SAL_generationContext(base);
+          assert.ok(planned.includes('PRIVATE PLANNING TASK'));
+          assert.ok(planned.length <= info.maxChars);
+          assert.equal(SAL_state().lastPlanningPromptAttached, true);
+          assert.equal(SAL_state().lastPlanningContextLength, planned.length);
+
+          const s = SAL_state();
+          s.turn = 100;
+          s.arc = '';
+          const failure = SAL_processGeneratedOutput('You continue walking through Tokyo as the morning traffic grows louder.');
+          assert.ok(failure.includes('0/8'));
+          assert.equal(s.lastPlanningOutputLength, 69);
+          assert.ok(s.lastPlanningOutputPreview.includes('continue walking'));
+          assert.ok(SAL_statusText().includes('Planning prompt attached: yes'));
+          assert.ok(SAL_statusText().includes('Last planning output preview:'));
+
+          const success = SAL_processGeneratedOutput(standard(7));
+          assert.ok(success.includes('7 possibilities'));
+          assert.equal(s.lastArcGenerationStatus, 'success (7 possibilities)');
+          console.log('SAL v1.3.7 zero-output hardening tests passed');
+          NODE
+
+      - name: Verify combined SAL core matches standalone
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          standalone = Path('SAL-only/1-Library.js').read_text().strip()
+          combined = Path('src/1-Library.js').read_text()
+          marker = '// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.7'
+          start = combined.find(marker)
+          if start < 0:
+              raise SystemExit('combined SAL marker missing')
+          start = combined.rfind('// ============================================================================', 0, start + 1)
+          combined_sal = combined[start:].strip()
+          if combined_sal != standalone:
+              raise SystemExit('combined SAL core differs from standalone')
+          PY
+
+      - name: Commit SAL v1.3.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'SeanL33316'
+          git config user.email '92255633+SeanL33316@users.noreply.github.com'
+          git add SAL-only src README.md
+          git commit -m 'Harden SAL private planning and expose zero-output diagnostics'
+          git push
