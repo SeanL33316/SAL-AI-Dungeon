@@ -9503,7 +9503,9 @@ function SAL_processGeneratedOutput(outputText) {
   // planning call waits the full normal refresh interval before SAL
   // tries automatically again. Manual /sal redo remains available.
   s.nextArcTurn = s.turn + s.turnsPerAICall;
-  s.lastArcGenerationStatus = `kept existing arc (${parsed.count}/8 recognized; minimum ${SAL_MIN_ARC_ITEMS})`;
+  s.lastArcGenerationStatus = hadArc
+  ? `kept existing arc (${parsed.count}/8 recognized; minimum ${SAL_MIN_ARC_ITEMS})`
+  : `no arc saved (${parsed.count}/8 recognized; minimum ${SAL_MIN_ARC_ITEMS})`;
 
   try {
     log(`SAL arc parse below minimum: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
