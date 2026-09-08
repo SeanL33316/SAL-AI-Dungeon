@@ -17,7 +17,7 @@ The combined version is the main package in `src/`. Each file is complete for it
   The original story-arc system that Story Arc Light was developed from.  
   Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Light (SAL) v1.3.7** is the lighter, player-first story-arc version used in this repository.
+**Story Arc Light (SAL) v1.3.8** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -64,7 +64,7 @@ SAL gives a long-running story direction without treating an outline as a fixed 
 1. **SAL watches the story normally.** It keeps track of story turns while the player continues playing.
 2. **SAL observes the opening before making its first arc.** The first automatic Story Arc is scheduled only after **10 normal story turns**. After an arc is saved, the next automatic refresh is **35 story turns later** by default.
 3. **The planning turn asks the AI for exactly 8 very short future possibilities.** Each item is kept compact so all eight fit even with shorter model response settings. SAL also reserves room for its private planning prompt inside AI Dungeon's `info.maxChars` limit so late-story refreshes do not lose the instructions to context truncation.
-4. **The result is stored in the `Current Story Arc` Story Card.** This lets the user inspect or manually edit the current possibilities.
+4. **The result is stored in the `Current Story Arc` Story Card.** This lets the user inspect or manually edit the current possibilities. SAL mirrors successful arcs directly into the live Story Card object; if Phoenix unexpectedly returns that card with a blank entry while SAL still has a valid saved arc, SAL repairs the card from its persistent state instead of deleting the arc.
 5. **The current arc is added to later story context as optional guidance.** It helps the AI remember possible directions without forcing them to happen.
 6. **Player input always wins.** If the player chooses something that conflicts with an arc idea, SAL tells the AI to delay, change, replace, or discard that idea instead of overriding the player.
 7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player's action is processed normally first, and SAL stays deferred until a later Continue-like turn instead of immediately scheduling itself again.

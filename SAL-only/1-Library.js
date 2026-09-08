@@ -1,5 +1,5 @@
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.7
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.8
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -9,7 +9,7 @@
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.7";
+const SAL_VERSION = "1.3.8";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_MIN_ARC_ITEMS = 5;
 const SAL_PROMPT_VERSION = 3;
@@ -54,6 +54,7 @@ function SAL_state() {
   if (typeof s.lastPlanningPromptAttached !== "boolean") s.lastPlanningPromptAttached = false;
   if (!Number.isFinite(s.lastPlanningOutputLength)) s.lastPlanningOutputLength = 0;
   if (typeof s.lastPlanningOutputPreview !== "string") s.lastPlanningOutputPreview = "";
+  if (typeof s.lastCardSyncStatus !== "string") s.lastCardSyncStatus = "not checked";
   if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {
     s.prompt = SAL_defaultPrompt();
     s.promptVersion = SAL_PROMPT_VERSION;
@@ -179,33 +180,54 @@ function SAL_getCard(keys) {
 function SAL_ensureCard(keys, entry) {
   let index = SAL_findCardIndex(keys);
   if (index >= 0) return index;
+
   try {
-    const added = addStoryCard(keys, entry, SAL_CARD_TYPE);
-    if (added !== false) return added;
+    const added = addStoryCard(keys, String(entry || ""), SAL_CARD_TYPE);
+    if (Number.isInteger(added)) {
+      index = added;
+    } else if (added && typeof added === "object" && Array.isArray(storyCards)) {
+      index = storyCards.indexOf(added);
+    }
   } catch (error) {
-    log("SAL addStoryCard failed: " + error);
+    try { log("SAL addStoryCard failed: " + error); } catch (_) {}
   }
-  return SAL_findCardIndex(keys);
+
+  // Current Phoenix builds do not guarantee that addStoryCard returns an
+  // array index. Always rediscover the card from storyCards after creation.
+  if (!Number.isInteger(index) || index < 0) index = SAL_findCardIndex(keys);
+  return Number.isInteger(index) ? index : -1;
 }
 
 function SAL_updateCard(keys, entry) {
-  const index = SAL_ensureCard(keys, entry);
-  if (index < 0) return false;
+  const value = String(entry || "");
+  const index = SAL_ensureCard(keys, value);
+  if (!Number.isInteger(index) || index < 0 || !Array.isArray(storyCards)) return false;
+
+  const card = storyCards[index];
+  if (!card || typeof card !== "object") return false;
+
+  // Inner Self / Auto-Cards persist Story Card changes by mutating the
+  // live storyCards object. Use the same proven path first on Phoenix.
   try {
-    updateStoryCard(index, keys, entry, SAL_CARD_TYPE);
-    return true;
+    card.keys = keys;
+    card.entry = value;
+    card.type = SAL_CARD_TYPE;
+    if (typeof card.title !== "string" || !card.title.trim()) card.title = keys;
+    if (String(card.entry || "") === value) return true;
   } catch (error) {
-    // Older sandboxes may allow direct mutation even when updateStoryCard fails.
-    try {
-      storyCards[index].keys = keys;
-      storyCards[index].entry = entry;
-      storyCards[index].type = SAL_CARD_TYPE;
-      return true;
-    } catch (_) {
-      log("SAL updateStoryCard failed: " + error);
-      return false;
-    }
+    try { log("SAL direct Story Card update failed: " + error); } catch (_) {}
   }
+
+  // Compatibility fallback for sandboxes that prefer the helper API.
+  try {
+    if (typeof updateStoryCard === "function") {
+      updateStoryCard(index, keys, value, SAL_CARD_TYPE);
+      return true;
+    }
+  } catch (error) {
+    try { log("SAL updateStoryCard fallback failed: " + error); } catch (_) {}
+  }
+  return false;
 }
 
 function SAL_migrateLegacyCard(oldKeys, newKeys) {
@@ -213,19 +235,25 @@ function SAL_migrateLegacyCard(oldKeys, newKeys) {
   if (oldIndex < 0 || SAL_findCardIndex(newKeys) >= 0) return;
 
   const card = storyCards[oldIndex];
-  const entry = String(card?.entry || "");
-  const type = card?.type || SAL_CARD_TYPE;
+  if (!card || typeof card !== "object") return;
+  const entry = String(card.entry || "");
+  const type = card.type || SAL_CARD_TYPE;
+
+  // Prefer the same live-object mutation used by Inner Self / Auto-Cards.
+  try {
+    card.keys = newKeys;
+    card.entry = entry;
+    card.type = type;
+    if (card.title === oldKeys) card.title = newKeys;
+    if (SAL_findCardIndex(newKeys) >= 0) return;
+  } catch (_) {}
 
   try {
-    updateStoryCard(oldIndex, newKeys, entry, type);
-  } catch (_) {
-    try {
-      storyCards[oldIndex].keys = newKeys;
-      storyCards[oldIndex].entry = entry;
-      storyCards[oldIndex].type = type;
-    } catch (error) {
-      log("SAL legacy Story Card migration failed: " + error);
+    if (typeof updateStoryCard === "function") {
+      updateStoryCard(oldIndex, newKeys, entry, type);
     }
+  } catch (error) {
+    try { log("SAL legacy Story Card migration failed: " + error); } catch (_) {}
   }
 }
 
@@ -279,17 +307,42 @@ function SAL_syncCards() {
 
   const arcIndex = SAL_ensureCard(SAL_ARC_KEYS, s.arc);
   let cardArc = "";
+  const stateArc = String(s.arc || "").trim();
+
   if (arcIndex >= 0) {
     cardArc = String(storyCards[arcIndex]?.entry || "").trim();
-    // Respect manual user edits to the Current Story Arc card.
-    if (cardArc !== String(s.arc || "").trim()) s.arc = cardArc;
+
+    if (!cardArc && stateArc) {
+      // A valid generated arc in persistent state must not be erased just
+      // because Phoenix returned an unexpectedly blank Story Card entry.
+      // Repair the visible card from state instead.
+      const repaired = SAL_updateCard(SAL_ARC_KEYS, s.arc);
+      const repairedIndex = SAL_findCardIndex(SAL_ARC_KEYS);
+      cardArc = repairedIndex >= 0
+        ? String(storyCards[repairedIndex]?.entry || "").trim()
+        : "";
+      s.lastCardSyncStatus = repaired && cardArc === stateArc
+        ? "repaired blank card from SAL state"
+        : "repair failed";
+    } else if (cardArc && cardArc !== stateArc) {
+      // Non-empty edits are intentional user edits and remain supported.
+      s.arc = cardArc;
+      s.lastCardSyncStatus = stateArc
+        ? "adopted manual Story Card edit"
+        : "loaded arc from Story Card";
+    } else {
+      s.lastCardSyncStatus = stateArc ? "synced" : "empty (no arc yet)";
+    }
+  } else {
+    s.lastCardSyncStatus = "card unavailable";
   }
 
-  // v1.3.7 timing migration: do not surprise an existing story with an
+  // Timing migration: do not surprise an existing story with an
   // immediate refresh. New/no-arc stories wait for the 10-turn observation
   // period; stories that already have an arc get a full refresh interval.
   if (s.timingVersion < 2) {
-    s.nextArcTurn = cardArc
+    const effectiveArc = String(s.arc || "").trim();
+    s.nextArcTurn = effectiveArc
       ? s.turn + s.turnsPerAICall
       : Math.max(SAL_INITIAL_WAIT_TURNS, s.turn);
     s.timingVersion = 2;
@@ -755,6 +808,7 @@ function SAL_statusText() {
     `Story turns: ${s.turn}`,
     `Initial observation period: ${SAL_INITIAL_WAIT_TURNS} story turns`,
     `Story Arc exists: ${hasArc ? "yes" : "no"}`,
+    `Story Arc card sync: ${s.lastCardSyncStatus}`,
     `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,
     hasArc
       ? `Next automatic refresh: story turn ${s.nextArcTurn}`
