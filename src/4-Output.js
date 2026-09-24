@@ -1,7 +1,11 @@
 // ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON OUTPUT
-// Short coordination hook based on the proven scenario structure.
+// SAL — STORY ARC LIGHT — AI DUNGEON OUTPUT — v1.3.9
+// Paste this entire file into the Output tab.
 // ============================================================================
+
+if (typeof SAL_state !== "function") {
+  throw new Error("SAL Library is missing or incomplete. Replace all four tabs with files from the same SAL package and save.");
+}
 
 const sal = SAL_state();
 
@@ -14,7 +18,7 @@ if (sal.commandPending) {
   sal.realPlayerInputThisTurn = false;
   sal.innerSelfTaskActive = false;
 } else if (sal.captureGeneration) {
-  // This model output is SAL's private eight-beat planning response.
+  // This model output is SAL's private planning response (five to eight usable items).
   if (state.InnerSelf) state.InnerSelf.agent = "";
   text = SAL_processGeneratedOutput(text);
 } else if (SAL_hasInnerSelf() && sal.innerSelfTaskActive) {
