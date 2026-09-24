@@ -1,7 +1,11 @@
 // ============================================================================
-// INNER SELF + SAL — COMBINED AI DUNGEON INPUT
-// Short coordination hook based on the proven scenario structure.
+// SAL — STORY ARC LIGHT — AI DUNGEON INPUT — v1.3.9
+// Paste this entire file into the Input tab.
 // ============================================================================
+
+if (typeof SAL_state !== "function") {
+  throw new Error("SAL Library is missing or incomplete. Replace all four tabs with files from the same SAL package and save.");
+}
 
 SAL_protectPlayerInput(text);
 text = SAL_inputCommands(text);
@@ -12,6 +16,8 @@ const salInput = SAL_state();
 if (SAL_hasInnerSelf() && !SAL_isBusy() && !salInput.commandPending) {
   InnerSelf("input");
 }
+
+if (typeof text !== "string" || text.length === 0) text = "\u200B";
 
 const modifier = (text) => {
   return { text };

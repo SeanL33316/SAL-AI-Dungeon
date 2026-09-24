@@ -1,0 +1,14 @@
+{
+  "name": "sal-ai-dungeon",
+  "version": "1.3.9",
+  "private": true,
+  "description": "Validation tools for Story Arc Light AI Dungeon scripts",
+  "scripts": {
+    "test": "node scripts/check-repository.mjs && node --test tests/*.test.js tests/*.test.mjs",
+    "sync": "node scripts/sync-packages.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
