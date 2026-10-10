@@ -17,7 +17,7 @@ The combined version is the main package in `src/`. Each file is complete for it
   The original story-arc system that Story Arc Light was developed from.  
   Original project: https://github.com/Yi1i1i/Story-Arc-Engine
 
-**Story Arc Light (SAL) v1.3.9** is the lighter, player-first story-arc version used in this repository.
+**Story Arc Light (SAL) v1.3.10** is the lighter, player-first story-arc version used in this repository.
 
 ## Main package: Inner Self + SAL
 
@@ -65,7 +65,7 @@ SAL gives a long-running story direction without treating an outline as a fixed 
 2. **SAL observes the opening before making its first arc.** The first automatic Story Arc is scheduled only after **10 normal story turns**. After an arc is saved, the next automatic refresh is **35 story turns later** by default.
 3. **The planning turn asks the AI for exactly 8 very short future possibilities.** Each item is kept compact so all eight fit even with shorter model response settings. SAL also reserves room for its private planning prompt inside AI Dungeon's `info.maxChars` limit so late-story refreshes do not lose the instructions to context truncation.
 4. **The result is stored in the `Current Story Arc` Story Card.** This lets the user inspect or manually edit the current possibilities. SAL mirrors successful arcs directly into the live Story Card object; if Phoenix unexpectedly returns that card with a blank entry while SAL still has a valid saved arc, SAL repairs the card from its persistent state instead of deleting the arc.
-5. **The current arc is added to later story context as optional guidance.** It helps the AI remember possible directions without forcing them to happen.
+5. **The current arc is added to later story context as optional guidance.** SAL inserts it before the Recent Story section instead of after the latest player input, so Do/Say/Story actions remain at the end of the context for an immediate reaction. It helps the AI remember possible directions without forcing them to happen.
 6. **Player input always wins.** If the player chooses something that conflicts with an arc idea, SAL tells the AI to delay, change, replace, or discard that idea instead of overriding the player.
 7. **If SAL is waiting to perform a private planning turn and the player types a real action, SAL defers its refresh.** The player's action is processed normally first, and SAL stays deferred until a later Continue-like turn instead of immediately scheduling itself again.
 8. **The arc gradually moves forward.** SAL usually removes one older possibility every **5 turns**, counting from when the arc was saved. If the AI generated only 5–6 possibilities, removal is spaced across the usual 35-turn refresh period instead of exhausting the arc early.
@@ -90,7 +90,7 @@ Older adventures that used `/SAL Settings` or `/Current Story Arc` are migrated 
 - Waits **10 normal story turns** before the first automatic Story Arc.
 - Refreshes **35 story turns after the last saved arc** by default. Failed/too-short planning calls also wait the normal 35-turn interval instead of retrying early.
 - Removes one older possibility every **5 turns** by default; short arcs use a longer interval to avoid running out early.
-- The player's newest explicit action always outranks the stored arc.
+- The player's newest explicit action always outranks the stored arc; the next response should acknowledge its immediate consequence instead of waiting for another Continue.
 - Planned beats can be delayed, changed, replaced, or discarded as the story changes.
 - Coordinates its private planning turns with Inner Self in the combined package.
 
