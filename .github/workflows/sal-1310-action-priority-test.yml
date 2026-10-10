@@ -1,4 +1,5 @@
 name: SAL 1.3.10 action priority validation
+# Verification rerun after handling truncated Recent Story headings
 on:
   push:
     paths:
