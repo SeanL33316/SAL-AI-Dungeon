@@ -742,7 +742,8 @@ function SAL_injectArc(baseText) {
   // instead of acknowledging that action until the following Continue.
   // First reserve room using our tested context trimmer, then move the
   // optional planning block BEFORE Recent Story so player input stays last.
-  const withRoom = SAL_appendContextBlock(baseText, guidance, false, 4);
+  // Leave room for separators and (if old history was truncated) its heading.
+  const withRoom = SAL_appendContextBlock(baseText, guidance, false, 32);
   const appended = "\n\n" + guidance;
   if (!withRoom.endsWith(appended)) return withRoom;
 
@@ -754,8 +755,15 @@ function SAL_injectArc(baseText) {
 
   const beforeHistory = base.slice(0, position).trimEnd();
   const recentHistory = base.slice(position).trimStart();
+  // The context trimmer keeps the newest actions but can cut off the
+  // "Recent Story:" label alongside old history. Restore only the label.
+  const hadRecentHeading = /(^|\n)Recent Story:/.test(String(baseText || ""));
+  const historyWithHeading = recentAt < 0 && hadRecentHeading
+    ? "Recent Story:\n" + recentHistory
+    : recentHistory;
+
   return (beforeHistory ? beforeHistory + "\n\n" : "")
-    + guidance + (recentHistory ? "\n\n" + recentHistory : "");
+    + guidance + (historyWithHeading ? "\n\n" + historyWithHeading : "");
 }
 
 function SAL_processGeneratedOutput(outputText) {
