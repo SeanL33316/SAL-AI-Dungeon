@@ -2,7 +2,7 @@
 // INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
 // ============================================================================
 // Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.8
+// Story Arc Light (SAL) v1.3.9
 //
 // Structure follows the proven scenario build:
 //   Library = all core code
@@ -8794,7 +8794,7 @@ function AutoCards(inHook, inText, inStop) {
 // Your other library scripts go here
 
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.8
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.9
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -8804,7 +8804,7 @@ function AutoCards(inHook, inText, inStop) {
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.8";
+const SAL_VERSION = "1.3.9";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_MIN_ARC_ITEMS = 5;
 const SAL_PROMPT_VERSION = 3;
@@ -8850,6 +8850,11 @@ function SAL_state() {
   if (!Number.isFinite(s.lastPlanningOutputLength)) s.lastPlanningOutputLength = 0;
   if (typeof s.lastPlanningOutputPreview !== "string") s.lastPlanningOutputPreview = "";
   if (typeof s.lastCardSyncStatus !== "string") s.lastCardSyncStatus = "not checked";
+  // Newly generated arcs pace beats across the normal refresh period.
+  // Older saved arcs keep legacy pacing until their next regeneration.
+  if (!Number.isFinite(s.arcSavedTurn)) s.arcSavedTurn = -1;
+  if (!Number.isFinite(s.arcStartItems)) s.arcStartItems = 0;
+  if (!Number.isFinite(s.arcBeatsRemoved)) s.arcBeatsRemoved = 0;
   if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {
     s.prompt = SAL_defaultPrompt();
     s.promptVersion = SAL_PROMPT_VERSION;
@@ -9122,6 +9127,10 @@ function SAL_syncCards() {
     } else if (cardArc && cardArc !== stateArc) {
       // Non-empty edits are intentional user edits and remain supported.
       s.arc = cardArc;
+      // A manual card edit should not inherit old generated-arc pacing.
+      s.arcSavedTurn = -1;
+      s.arcStartItems = 0;
+      s.arcBeatsRemoved = 0;
       s.lastCardSyncStatus = stateArc
         ? "adopted manual Story Card edit"
         : "loaded arc from Story Card";
@@ -9167,6 +9176,8 @@ function SAL_cleanContextNoise(value) {
   let text = String(value || "");
   text = text.replace(/<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>[\s\S]*?<<END STORY ARC LIGHT>>/gi, "");
   text = text.replace(/<<[^<>]*(?:Story Arc Light|Updating Story Arc|Generating Story Arc|Story Arc generated|Attempt Limit Reached)[^<>]*>>/gi, "");
+  // Compact SAL notices are UI controls, not story or planning context.
+  text = text.replace(/<<[^<>\n]*\bSAL (?:ready|updated|skipped)\b[^<>\n]*>>/gi, "");
 
   const s = SAL_state();
   if (Array.isArray(s.utilityOutputs)) {
@@ -9540,9 +9551,12 @@ function SAL_processGeneratedOutput(outputText) {
     s.deferred = false;
     s.generationReason = "";
     s.nextArcTurn = s.turn + s.turnsPerAICall;
+    s.arcSavedTurn = s.turn;
+    s.arcStartItems = parsed.count;
+    s.arcBeatsRemoved = 0;
     s.lastArcGenerationStatus = `success (${parsed.count} possibilities)`;
     SAL_saveArc();
-    return `<< ✅ Story Arc Light updated with ${parsed.count} possibilities. Continue playing normally. >>`;
+    return `<< ✓ SAL updated (${parsed.count}/8). >>`;
   }
 
   const hadArc = Boolean(String(s.arc || "").trim());
@@ -9565,20 +9579,38 @@ function SAL_processGeneratedOutput(outputText) {
   } catch (_) {}
 
   return hadArc
-    ? `<< ⚠️ Story Arc Light only found ${parsed.count}/8 usable possibilities, below the minimum of ${SAL_MIN_ARC_ITEMS}. The existing arc was kept. SAL will wait for the normal refresh interval; use '/sal redo' only if you want to try again sooner. >>`
-    : `<< ⚠️ Story Arc Light only found ${parsed.count}/8 usable possibilities, below the minimum of ${SAL_MIN_ARC_ITEMS}. No arc was saved. SAL will wait for the normal refresh interval; use '/sal redo' only if you want to try again sooner. >>`;
+    ? `<< ⚠ SAL skipped (${parsed.count}/8); old arc kept. >>`
+    : `<< ⚠ SAL skipped (${parsed.count}/8); no arc saved. >>`;
+}
+
+function SAL_beatInterval() {
+  const s = SAL_state();
+  if (s.turnsPerElemRemoval <= 0) return 0;
+  if (s.arcSavedTurn >= 0 && s.arcStartItems >= SAL_MIN_ARC_ITEMS) {
+    return Math.max(
+      s.turnsPerElemRemoval,
+      Math.ceil(s.turnsPerAICall / s.arcStartItems)
+    );
+  }
+  return s.turnsPerElemRemoval;
 }
 
 function SAL_onNormalOutput(outputText) {
   const s = SAL_state();
   s.turn += 1;
 
-  if (
-    s.turnsPerElemRemoval > 0 &&
-    s.turn >= 5 &&
-    s.turn % s.turnsPerElemRemoval === 0
-  ) {
-    SAL_removeFirstArcItem();
+  const removalInterval = SAL_beatInterval();
+  if (removalInterval > 0 && s.arc.trim()) {
+    if (s.arcSavedTurn >= 0) {
+      // Start from the arc's save turn, not global turn multiples.
+      if (s.turn - s.arcSavedTurn >= removalInterval * (s.arcBeatsRemoved + 1)) {
+        SAL_removeFirstArcItem();
+        s.arcBeatsRemoved += 1;
+      }
+    } else if (s.turn >= removalInterval && s.turn % removalInterval === 0) {
+      // Existing adventures retain old pacing until their next new arc.
+      SAL_removeFirstArcItem();
+    }
   }
 
   const scheduled = SAL_scheduleIfDue();
@@ -9588,7 +9620,7 @@ function SAL_onNormalOutput(outputText) {
 
   if (scheduled) {
     return String(outputText || "") +
-      "\n\n<< ⚠️ Story Arc Light will update next turn. Click 'Continue', or keep playing and SAL will defer the update. >>";
+      "\n\n<< ⏳ SAL ready: Continue to refresh; other actions defer. >>";
   }
 
   return outputText;
@@ -9608,7 +9640,7 @@ function SAL_statusText() {
     hasArc
       ? `Next automatic refresh: story turn ${s.nextArcTurn}`
       : `First automatic arc check: story turn ${s.nextArcTurn}`,
-    `Remove one beat every: ${s.turnsPerElemRemoval === 0 ? "off" : s.turnsPerElemRemoval + " turns"}`,
+    `Remove one beat every: ${SAL_beatInterval() === 0 ? "off" : SAL_beatInterval() + " turns"}`,
     `Private arc call pending: ${SAL_isBusy() ? "yes" : "no"}`,
     `Refresh deferred for player input: ${s.deferred ? "yes" : "no"}`,
     `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,
