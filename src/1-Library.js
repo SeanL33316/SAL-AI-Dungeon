@@ -2,7 +2,7 @@
 // INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
 // ============================================================================
 // Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.9
+// Story Arc Light (SAL) v1.3.10
 //
 // Structure follows the proven scenario build:
 //   Library = all core code
@@ -8794,7 +8794,7 @@ function AutoCards(inHook, inText, inStop) {
 // Your other library scripts go here
 
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.9
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.10
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -8804,7 +8804,7 @@ function AutoCards(inHook, inText, inStop) {
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.9";
+const SAL_VERSION = "1.3.10";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_MIN_ARC_ITEMS = 5;
 const SAL_PROMPT_VERSION = 3;
@@ -9196,7 +9196,7 @@ function SAL_contextLimits() {
   return { maxChars, memoryLength };
 }
 
-function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim) {
+function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim, extraReserve = 0) {
   const raw = String(baseText || "");
   const block = String(blockText || "").trim();
   if (!block) return SAL_cleanContextNoise(raw);
@@ -9213,7 +9213,10 @@ function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim) {
     return memory + body + suffix;
   }
 
-  const baseBudget = Math.max(0, maxChars - suffix.length);
+  // Reserve a few extra characters when guidance will be repositioned so its
+  // separators cannot push the final context beyond AI Dungeon's limit.
+  const reserve = Math.max(0, Math.floor(Number(extraReserve) || 0));
+  const baseBudget = Math.max(0, maxChars - suffix.length - reserve);
   if (memory.length > baseBudget) {
     const memoryBudget = Math.max(0, Math.floor(baseBudget * 0.4));
     memory = memory.slice(0, memoryBudget);
@@ -9255,7 +9258,9 @@ function SAL_softArcText(numbered) {
   return [
     "OPTIONAL STORY ARC LIGHT POSSIBILITIES:",
     "The player's newest explicit input has absolute priority over every item below.",
-    "Respond to the player's current action first.",
+    "Respond to the player's newest action or dialogue in this very next response.",
+    "Show its immediate reaction or consequence before extending the previous scene.",
+    "Never delay acknowledging it until a later Continue action.",
     "Never force, assume, or manufacture a player decision just to advance a beat.",
     "Delay, alter, replace, or discard any beat that conflicts with what the player does.",
     clean
@@ -9527,7 +9532,25 @@ function SAL_injectArc(baseText) {
     "<<END STORY ARC LIGHT>>"
   ].join("\n");
 
-  return SAL_appendContextBlock(baseText, guidance, false);
+  // AI Dungeon puts the newest Do/Say/Story action near the end of context.
+  // Appending guidance after it can make the AI continue the earlier scene
+  // instead of acknowledging that action until the following Continue.
+  // First reserve room using our tested context trimmer, then move the
+  // optional planning block BEFORE Recent Story so player input stays last.
+  const withRoom = SAL_appendContextBlock(baseText, guidance, false, 4);
+  const appended = "\n\n" + guidance;
+  if (!withRoom.endsWith(appended)) return withRoom;
+
+  const base = withRoom.slice(0, -appended.length);
+  const recentAt = base.lastIndexOf("\nRecent Story:");
+  const position = recentAt >= 0
+    ? recentAt + 1
+    : Math.min(SAL_contextLimits().memoryLength, base.length);
+
+  const beforeHistory = base.slice(0, position).trimEnd();
+  const recentHistory = base.slice(position).trimStart();
+  return (beforeHistory ? beforeHistory + "\n\n" : "")
+    + guidance + (recentHistory ? "\n\n" + recentHistory : "");
 }
 
 function SAL_processGeneratedOutput(outputText) {
