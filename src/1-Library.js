@@ -2,7 +2,7 @@
 // INNER SELF + STORY ARC LIGHT (SAL) — COMBINED AI DUNGEON LIBRARY
 // ============================================================================
 // Inner Self v1.0.2 — LewdLeah
-// Story Arc Light (SAL) v1.3.10
+// Story Arc Light (SAL) v1.3.11
 //
 // Structure follows the proven scenario build:
 //   Library = all core code
@@ -3539,7 +3539,7 @@ function AutoCards(inHook, inText, inStop) {
                                 );
                             })
                             .join("\n")
-                        ) + (right !== "") ? ("\n\n" + right) : "");
+                        ) + ((right !== "") ? ("\n\n" + right) : "")); // SAL patch: preserve valid memories.
                     })
                     // Remove various Auto-Cards messages
                     .replace(/(?:\s*>>>[\s\S]*?<<<\s*)+/g, "\n\n")
@@ -6001,7 +6001,7 @@ function AutoCards(inHook, inText, inStop) {
                 const compressionsRemaining = (function() {
                     const newMemory = (textClone
                         // Remove some dumb stuff
-                        .replace(/^[\s\S]*:/g, "")
+                        .replace(/^\s*(?:(?:memory|memories)(?:\s+summary)?|summary|old\s+memory)\s*:\s*/i, "")
                         .replace(/[\*_~#><@\[\]{}`\\]/g, " ")
                         // Remove bullets
                         .trim().replace(/^-+\s*/, "").replace(/\s*-+$/, "").replace(/\s*-\s+/g, " ")
@@ -8794,7 +8794,7 @@ function AutoCards(inHook, inText, inStop) {
 // Your other library scripts go here
 
 // ============================================================================
-// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.10
+// SAL — STORY ARC LIGHT — AI DUNGEON LIBRARY — v1.3.11
 // ============================================================================
 // Standalone player-first story direction for AI Dungeon.
 // Paste this entire file into the Library tab.
@@ -8804,7 +8804,7 @@ function AutoCards(inHook, inText, inStop) {
 // Output wrappers will coordinate with it automatically.
 // ============================================================================
 
-const SAL_VERSION = "1.3.10";
+const SAL_VERSION = "1.3.11";
 const SAL_INITIAL_WAIT_TURNS = 10;
 const SAL_MIN_ARC_ITEMS = 5;
 const SAL_PROMPT_VERSION = 3;
@@ -8813,25 +8813,37 @@ const SAL_ARC_KEYS = "Current Story Arc";
 const SAL_LEGACY_SETTINGS_KEYS = "/SAL Settings";
 const SAL_LEGACY_ARC_KEYS = "/Current Story Arc";
 const SAL_CARD_TYPE = "SAL System";
+// Bound generated data; hand-authored cards remain editable without this cap.
+const SAL_MAX_GENERATED_CHARS = 16000;
+const SAL_MAX_ITEM_CHARS = 500;
 
 function SAL_state() {
-  state.SAL = state.SAL || {};
+  if (typeof state !== "object" || !state || Array.isArray(state)) {
+    throw new Error("SAL needs AI Dungeon's state object. Install all four SAL files in their matching scripting tabs.");
+  }
+  if (!state.SAL || typeof state.SAL !== "object" || Array.isArray(state.SAL)) {
+    state.SAL = {};
+  }
   const s = state.SAL;
 
   if (typeof s.enabled !== "boolean") s.enabled = true;
-  if (!Number.isFinite(s.turn)) s.turn = 0;
+  if (!Number.isSafeInteger(s.turn) || s.turn < 0) s.turn = 0;
   if (!Number.isFinite(s.turnsPerAICall)) s.turnsPerAICall = 35;
   if (!Number.isFinite(s.turnsPerElemRemoval)) s.turnsPerElemRemoval = 5;
-  if (!Number.isFinite(s.attemptLimit)) s.attemptLimit = 3;
+  s.turnsPerAICall = Math.max(5, Math.min(500, Math.floor(s.turnsPerAICall)));
+  s.turnsPerElemRemoval = Math.max(0, Math.min(100, Math.floor(s.turnsPerElemRemoval)));
+  if (!Number.isFinite(s.attemptLimit)) s.attemptLimit = 3; // legacy; no retry loop
   if (!Number.isFinite(s.attempt)) s.attempt = 0;
-  if (!Number.isFinite(s.nextArcTurn)) s.nextArcTurn = SAL_INITIAL_WAIT_TURNS;
+  if (!Number.isSafeInteger(s.nextArcTurn) || s.nextArcTurn < 0) s.nextArcTurn = SAL_INITIAL_WAIT_TURNS;
   if (!Number.isFinite(s.timingVersion)) s.timingVersion = 0;
   if (typeof s.generationReason !== "string") s.generationReason = "";
   if (typeof s.arc !== "string") s.arc = "";
   if (typeof s.pendingGeneration !== "boolean") s.pendingGeneration = false;
   if (typeof s.captureGeneration !== "boolean") s.captureGeneration = false;
+  if (s.pendingGeneration) s.captureGeneration = false; // Normalize pre-1.3.9 queued state.
   if (typeof s.deferred !== "boolean") s.deferred = false;
   if (typeof s.realPlayerInputThisTurn !== "boolean") s.realPlayerInputThisTurn = false;
+  if (typeof s.autoCardsCommandThisTurn !== "boolean") s.autoCardsCommandThisTurn = false;
   if (typeof s.innerSelfTaskActive !== "boolean") s.innerSelfTaskActive = false;
   if (typeof s.showStatus !== "boolean") s.showStatus = false;
   if (typeof s.pendingMessage !== "string") s.pendingMessage = "";
@@ -8841,6 +8853,13 @@ function SAL_state() {
   if (typeof s.commandPending !== "boolean") s.commandPending = false;
   if (typeof s.commandResponse !== "string") s.commandResponse = "";
   if (!Array.isArray(s.utilityOutputs)) s.utilityOutputs = [];
+  // Legacy utility-history cleanup is best effort; never let it exhaust state.
+  let utilityChars = 0;
+  s.utilityOutputs = s.utilityOutputs.slice(-6).filter(item => {
+    if (typeof item !== "string" || item.length > 6000 - utilityChars) return false;
+    utilityChars += item.length;
+    return true;
+  });
   if (!Number.isFinite(s.promptVersion)) s.promptVersion = 0;
   if (!Number.isFinite(s.lastArcRecognizedItems)) s.lastArcRecognizedItems = 0;
   if (typeof s.lastArcGenerationStatus !== "string") s.lastArcGenerationStatus = "not yet";
@@ -8849,18 +8868,30 @@ function SAL_state() {
   if (typeof s.lastPlanningPromptAttached !== "boolean") s.lastPlanningPromptAttached = false;
   if (!Number.isFinite(s.lastPlanningOutputLength)) s.lastPlanningOutputLength = 0;
   if (typeof s.lastPlanningOutputPreview !== "string") s.lastPlanningOutputPreview = "";
+  if (typeof s.debug !== "boolean") s.debug = false;
+  if (typeof s.lastError !== "string") s.lastError = "";
+  if (typeof s.settingsWarning !== "string") s.settingsWarning = "";
+  if (typeof s.lastGuidanceSkipped !== "boolean") s.lastGuidanceSkipped = false;
   if (typeof s.lastCardSyncStatus !== "string") s.lastCardSyncStatus = "not checked";
-  // Newly generated arcs pace beats across the normal refresh period.
-  // Older saved arcs keep legacy pacing until their next regeneration.
-  if (!Number.isFinite(s.arcSavedTurn)) s.arcSavedTurn = -1;
-  if (!Number.isFinite(s.arcStartItems)) s.arcStartItems = 0;
-  if (!Number.isFinite(s.arcBeatsRemoved)) s.arcBeatsRemoved = 0;
+  // Preserve v1.3.10 pacing when upgrading a saved adventure.
+  if (!Number.isSafeInteger(s.arcSavedTurn) || s.arcSavedTurn < -1 || s.arcSavedTurn > s.turn) s.arcSavedTurn = -1;
+  if (!Number.isSafeInteger(s.arcStartItems) || s.arcStartItems < 0 || s.arcStartItems > 8) s.arcStartItems = 0;
+  if (!Number.isSafeInteger(s.arcBeatsRemoved) || s.arcBeatsRemoved < 0) s.arcBeatsRemoved = 0;
   if (s.promptVersion < SAL_PROMPT_VERSION || typeof s.prompt !== "string" || !s.prompt.trim()) {
     s.prompt = SAL_defaultPrompt();
     s.promptVersion = SAL_PROMPT_VERSION;
   }
   s.version = SAL_VERSION;
   return s;
+}
+
+function SAL_reportError(message) {
+  const s = SAL_state();
+  const clean = String(message).slice(0, 300);
+  if (s.debug && s.lastError !== clean) {
+    try { log(clean); } catch (_) {}
+  }
+  s.lastError = clean;
 }
 
 function SAL_defaultPrompt() {
@@ -8901,10 +8932,32 @@ function SAL_hasInnerSelf() {
 
 function SAL_hasInnerSelfTask() {
   return Boolean(
-    state.InnerSelf &&
-    typeof state.InnerSelf.agent === "string" &&
-    state.InnerSelf.agent.trim().length > 0
+    (typeof globalThis.stop !== "undefined" && globalThis.stop === true) ||
+    (state.InnerSelf && state.InnerSelf.AC && state.InnerSelf.AC.event === true)
   );
+}
+
+function SAL_postponeAutoCardsForPlayerInput() {
+  const s = SAL_state();
+  if (!s.realPlayerInputThisTurn || s.autoCardsCommandThisTurn) return false;
+  if (typeof globalThis.AutoCards !== "function") return false;
+  if (!state.InnerSelf || !state.InnerSelf.AC || state.InnerSelf.AC.enabled !== true) return false;
+
+  const wasForced = state.InnerSelf.AC.forced;
+  try {
+    const api = AutoCards()?.API;
+    if (api && typeof api.postponeEvents === "function") {
+      const previous = state.AutoCards?.chronometer?.postpone;
+      api.postponeEvents(Number.isInteger(previous) ? Math.max(1, previous) : 1);
+      return true;
+    }
+  } catch (error) {
+    SAL_reportError("SAL could not postpone Auto-Cards for player input: " + error);
+  } finally {
+    // This coordination call must not force-enable a user-disabled integration.
+    state.InnerSelf.AC.forced = wasForced;
+  }
+  return false;
 }
 
 function SAL_isBusy() {
@@ -8956,18 +9009,20 @@ function SAL_isCommand(value) {
 }
 
 function SAL_isRealPlayerInput(value) {
-  const t = String(value || "").trim();
+  const t = String(value || "").replace(/[\u200B-\u200D]/g, "").trim();
   if (!t) return false;
   if (SAL_isCommand(t)) return false;
   return true;
 }
 
 function SAL_findCardIndex(keys) {
-  if (!Array.isArray(storyCards)) return -1;
+  if (typeof storyCards === "undefined" || !Array.isArray(storyCards)) return -1;
   const wanted = String(keys || "").trim().toLowerCase();
   return storyCards.findIndex(card => {
     if (!card) return false;
-    const cardKeys = Array.isArray(card.keys) ? card.keys.join(",") : String(card.keys || "");
+    const cardKeys = Array.isArray(card.keys)
+      ? card.keys.filter(key => typeof key === "string").join(",")
+      : typeof card.keys === "string" ? card.keys : "";
     return cardKeys.trim().toLowerCase() === wanted;
   });
 }
@@ -8982,19 +9037,14 @@ function SAL_ensureCard(keys, entry) {
   if (index >= 0) return index;
 
   try {
-    const added = addStoryCard(keys, String(entry || ""), SAL_CARD_TYPE);
-    if (Number.isInteger(added)) {
-      index = added;
-    } else if (added && typeof added === "object" && Array.isArray(storyCards)) {
-      index = storyCards.indexOf(added);
-    }
+    addStoryCard(keys, String(entry || ""), SAL_CARD_TYPE);
   } catch (error) {
-    try { log("SAL addStoryCard failed: " + error); } catch (_) {}
+    SAL_reportError("SAL could not create " + keys + ": " + error);
   }
 
-  // Current Phoenix builds do not guarantee that addStoryCard returns an
-  // array index. Always rediscover the card from storyCards after creation.
-  if (!Number.isInteger(index) || index < 0) index = SAL_findCardIndex(keys);
+  // The documented API returns an index. Rediscover by key so alternate
+  // implementations returning a card/undefined cannot select an unrelated card.
+  index = SAL_findCardIndex(keys);
   return Number.isInteger(index) ? index : -1;
 }
 
@@ -9007,25 +9057,27 @@ function SAL_updateCard(keys, entry) {
   if (!card || typeof card !== "object") return false;
 
   // Inner Self / Auto-Cards persist Story Card changes by mutating the
-  // live storyCards object. Use the same proven path first on Phoenix.
+  // live storyCards object. Retain that approach; verify hosted persistence live.
   try {
     card.keys = keys;
     card.entry = value;
     card.type = SAL_CARD_TYPE;
     if (typeof card.title !== "string" || !card.title.trim()) card.title = keys;
-    if (String(card.entry || "") === value) return true;
+    if (card.entry === value) return true;
   } catch (error) {
-    try { log("SAL direct Story Card update failed: " + error); } catch (_) {}
+    SAL_reportError("SAL direct Story Card update failed: " + error);
   }
 
   // Compatibility fallback for sandboxes that prefer the helper API.
   try {
     if (typeof updateStoryCard === "function") {
       updateStoryCard(index, keys, value, SAL_CARD_TYPE);
-      return true;
+      const updated = SAL_getCard(keys);
+      if (updated && updated.entry === value) return true;
+      SAL_reportError("SAL could not confirm the Story Card write for " + keys + ". The previous saved arc will be kept.");
     }
   } catch (error) {
-    try { log("SAL updateStoryCard fallback failed: " + error); } catch (_) {}
+    SAL_reportError("SAL Story Card update failed: " + error);
   }
   return false;
 }
@@ -9036,7 +9088,7 @@ function SAL_migrateLegacyCard(oldKeys, newKeys) {
 
   const card = storyCards[oldIndex];
   if (!card || typeof card !== "object") return;
-  const entry = String(card.entry || "");
+  const entry = typeof card.entry === "string" ? card.entry : "";
   const type = card.type || SAL_CARD_TYPE;
 
   // Prefer the same live-object mutation used by Inner Self / Auto-Cards.
@@ -9053,7 +9105,7 @@ function SAL_migrateLegacyCard(oldKeys, newKeys) {
       updateStoryCard(oldIndex, newKeys, entry, type);
     }
   } catch (error) {
-    try { log("SAL legacy Story Card migration failed: " + error); } catch (_) {}
+    SAL_reportError("SAL legacy Story Card migration failed: " + error);
   }
 }
 
@@ -9070,6 +9122,7 @@ function SAL_settingsText() {
     "enabled = " + s.enabled,
     "turnsPerAICall = " + s.turnsPerAICall,
     "turnsPerElemRemoval = " + s.turnsPerElemRemoval,
+    "debug = " + s.debug,
     "",
     "Commands:",
     "/sal or /sal status — show SAL status",
@@ -9082,18 +9135,37 @@ function SAL_settingsText() {
 
 function SAL_parseSettings(entry) {
   const s = SAL_state();
-  const text = String(entry || "");
-  let match;
-
-  match = text.match(/enabled\s*=\s*(true|false)/i);
-  if (match) s.enabled = match[1].toLowerCase() === "true";
-
-  match = text.match(/turnsPerAICall\s*=\s*(\d+)/i);
-  if (match) s.turnsPerAICall = Math.max(5, Math.min(500, Number(match[1])));
-
-  match = text.match(/turnsPerElemRemoval\s*=\s*(\d+)/i);
-  if (match) s.turnsPerElemRemoval = Math.max(0, Math.min(100, Number(match[1])));
-
+  const warnings = [];
+  const seen = new Set();
+  // Exact assignment lines only: comments and words like "notenabled" are inert.
+  for (const line of (typeof entry === "string" ? entry : "").split(/\r?\n/)) {
+    const match = line.match(/^\s*(enabled|turnsPerAICall|turnsPerElemRemoval|debug)\s*=\s*(.*?)\s*(?:(?:#|\/\/).*)?$/i);
+    if (!match) continue;
+    const key = ["enabled", "turnsPerAICall", "turnsPerElemRemoval", "debug"]
+      .find(name => name.toLowerCase() === match[1].toLowerCase());
+    if (seen.has(key)) { warnings.push("Duplicate " + key + "; first assignment used."); continue; }
+    seen.add(key);
+    const value = match[2].trim();
+    if (key === "enabled" || key === "debug") {
+      if (/^(true|false)$/i.test(value)) s[key] = value.toLowerCase() === "true";
+      else warnings.push(key + " must be true or false; previous value kept.");
+    } else if (/^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
+      const [min, max] = key === "turnsPerAICall" ? [5, 500] : [0, 100];
+      s[key] = Math.max(min, Math.min(max, Number(value)));
+      if (s[key] !== Number(value)) warnings.push(key + " clamped to " + s[key] + ".");
+    } else {
+      warnings.push(key + " must be a whole non-negative integer; previous value kept.");
+    }
+  }
+  s.settingsWarning = warnings.join(" ");
+  if (!s.enabled) {
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.deferred = false;
+    s.generationReason = "";
+    s.attempt = 0;
+    s.pendingMessage = "";
+  }
 }
 
 function SAL_syncCards() {
@@ -9110,7 +9182,7 @@ function SAL_syncCards() {
   const stateArc = String(s.arc || "").trim();
 
   if (arcIndex >= 0) {
-    cardArc = String(storyCards[arcIndex]?.entry || "").trim();
+    cardArc = typeof storyCards[arcIndex]?.entry === "string" ? storyCards[arcIndex].entry.trim() : "";
 
     if (!cardArc && stateArc) {
       // A valid generated arc in persistent state must not be erased just
@@ -9119,7 +9191,7 @@ function SAL_syncCards() {
       const repaired = SAL_updateCard(SAL_ARC_KEYS, s.arc);
       const repairedIndex = SAL_findCardIndex(SAL_ARC_KEYS);
       cardArc = repairedIndex >= 0
-        ? String(storyCards[repairedIndex]?.entry || "").trim()
+        ? (typeof storyCards[repairedIndex]?.entry === "string" ? storyCards[repairedIndex].entry.trim() : "")
         : "";
       s.lastCardSyncStatus = repaired && cardArc === stateArc
         ? "repaired blank card from SAL state"
@@ -9127,7 +9199,7 @@ function SAL_syncCards() {
     } else if (cardArc && cardArc !== stateArc) {
       // Non-empty edits are intentional user edits and remain supported.
       s.arc = cardArc;
-      // A manual card edit should not inherit old generated-arc pacing.
+      // Hand-edited arcs retain legacy pacing until the next generation.
       s.arcSavedTurn = -1;
       s.arcStartItems = 0;
       s.arcBeatsRemoved = 0;
@@ -9157,9 +9229,21 @@ function SAL_saveSettings() {
   SAL_updateCard(SAL_SETTINGS_KEYS, SAL_settingsText());
 }
 
-function SAL_saveArc() {
+function SAL_saveArc(previousArc) {
   const s = SAL_state();
-  SAL_updateCard(SAL_ARC_KEYS, s.arc || "");
+  const value = String(s.arc || "");
+  if (SAL_updateCard(SAL_ARC_KEYS, value)) return true;
+
+  // Keep persistent state and the visible Story Card synchronized. If a write
+  // fails, roll state back instead of pretending the new arc was saved.
+  if (arguments.length > 0) {
+    s.arc = String(previousArc || "");
+  } else {
+    const card = SAL_getCard(SAL_ARC_KEYS);
+    s.arc = card && typeof card.entry === "string" ? card.entry : "";
+  }
+  s.lastCardSyncStatus = "arc write failed; kept previous saved arc";
+  return false;
 }
 
 function SAL_rememberUtilityOutput(value) {
@@ -9174,10 +9258,11 @@ function SAL_rememberUtilityOutput(value) {
 
 function SAL_cleanContextNoise(value) {
   let text = String(value || "");
+  // Short on-screen notices must never become narrative or NPC memories.
+  text = text.replace(/<<[^<>\n]*\bSAL (?:ready|updated|skipped)\b[^<>\n]*>>/gi, "");
+  text = text.replace(/<<SAL UTILITY RESPONSE>>[\s\S]*?<<END SAL UTILITY RESPONSE>>/g, "");
   text = text.replace(/<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>[\s\S]*?<<END STORY ARC LIGHT>>/gi, "");
   text = text.replace(/<<[^<>]*(?:Story Arc Light|Updating Story Arc|Generating Story Arc|Story Arc generated|Attempt Limit Reached)[^<>]*>>/gi, "");
-  // Compact SAL notices are UI controls, not story or planning context.
-  text = text.replace(/<<[^<>\n]*\bSAL (?:ready|updated|skipped)\b[^<>\n]*>>/gi, "");
 
   const s = SAL_state();
   if (Array.isArray(s.utilityOutputs)) {
@@ -9196,36 +9281,68 @@ function SAL_contextLimits() {
   return { maxChars, memoryLength };
 }
 
-function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim, extraReserve = 0) {
+function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim, extraReserve = 0, beforeRecent = false) {
   const raw = String(baseText || "");
   const block = String(blockText || "").trim();
-  if (!block) return SAL_cleanContextNoise(raw);
 
   const { maxChars, memoryLength } = SAL_contextLimits();
-  const splitAt = Math.min(memoryLength, raw.length);
-  let memory = raw.slice(0, splitAt);
+  const recentHeading = raw.search(/(^|\n)Recent Story:/);
+  // Prefer the explicit story boundary when another hook has changed the
+  // memory prefix. Stale metadata must not classify the latest action as memory.
+  const splitAt = Math.min(memoryLength, recentHeading >= 0 ? recentHeading : raw.length);
+  let memory = SAL_cleanContextNoise(raw.slice(0, splitAt));
   let body = SAL_cleanContextNoise(raw.slice(splitAt));
-  const suffix = "\n\n" + block;
+  let suffix = block ? "\n\n" + block : "";
   let trimmed = false;
+
+  // Keep the retained memory length while relocating narrative guidance.
+  // info.memoryLength describes the original context, not the trimmed one.
+  const render = () => {
+    if (!beforeRecent || !block) return memory + body + suffix;
+    const base = memory + body;
+    const headings = [...base.matchAll(/(^|\n)Recent Story:/g)];
+    const heading = headings.at(-1);
+    const position = heading ? heading.index + heading[1].length : memory.length;
+    const prefix = base.slice(0, position).trimEnd();
+    const history = base.slice(position).trimStart();
+    const hadHeading = /(^|\n)Recent Story:/.test(raw);
+    const recent = !heading && hadHeading ? "Recent Story:\n" + history : history;
+    return (prefix ? prefix + "\n\n" : "") + block + (recent ? "\n\n" + recent : "");
+  };
 
   if (!maxChars) {
     if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = false;
-    return memory + body + suffix;
+    return render();
   }
 
-  // Reserve a few extra characters when guidance will be repositioned so its
-  // separators cannot push the final context beyond AI Dungeon's limit.
+  // If the injected block alone would consume the whole context window,
+  // reserve room for the newest story text. This protects the player's latest
+  // explicit action from being displaced by oversized SAL guidance.
+  if (suffix.length >= maxChars) {
+    const reserveRatio = trackPlanningTrim ? 0.20 : 0.40;
+    const baseReserve = Math.min(raw.length, Math.max(1, Math.floor(maxChars * reserveRatio)));
+    const blockBudget = Math.max(0, maxChars - baseReserve - 2);
+    const clippedBlock = block.slice(0, blockBudget).trimEnd();
+    const baseTail = SAL_cleanContextNoise(raw.slice(-baseReserve));
+    suffix = clippedBlock ? "\n\n" + clippedBlock : "";
+    const result = (baseTail + suffix).slice(-maxChars);
+    if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = true;
+    return result;
+  }
+
+  // Moving guidance before history may restore a lost Recent Story heading.
   const reserve = Math.max(0, Math.floor(Number(extraReserve) || 0));
   const baseBudget = Math.max(0, maxChars - suffix.length - reserve);
-  if (memory.length > baseBudget) {
-    const memoryBudget = Math.max(0, Math.floor(baseBudget * 0.4));
+  const recentReserve = Math.min(body.length, Math.floor(baseBudget * 0.5));
+  if (memory.length > baseBudget - recentReserve) {
+    const memoryBudget = Math.max(0, baseBudget - recentReserve);
     memory = memory.slice(0, memoryBudget);
     trimmed = true;
   }
 
   const bodyBudget = Math.max(0, baseBudget - memory.length);
   if (body.length > bodyBudget) {
-    body = bodyBudget > 1 ? "\n" + body.slice(-(bodyBudget - 1)) : body.slice(-bodyBudget);
+    body = bodyBudget > 1 ? "\n" + body.slice(-(bodyBudget - 1)) : bodyBudget === 1 ? body.slice(-1) : "";
     trimmed = true;
   }
 
@@ -9249,7 +9366,7 @@ function SAL_appendContextBlock(baseText, blockText, trackPlanningTrim, extraRes
   }
 
   if (trackPlanningTrim) SAL_state().lastPlanningContextTrimmed = trimmed;
-  return result;
+  return render();
 }
 
 function SAL_softArcText(numbered) {
@@ -9263,12 +9380,15 @@ function SAL_softArcText(numbered) {
     "Never delay acknowledging it until a later Continue action.",
     "Never force, assume, or manufacture a player decision just to advance a beat.",
     "Delay, alter, replace, or discard any beat that conflicts with what the player does.",
+    "These are possible futures, not completed events or NPC memories.",
+    "NPCs act only on knowledge they have learned; private beliefs are not shared facts.",
     clean
   ].join("\n");
 }
 
 function SAL_cleanArcItem(value) {
-  return String(value || "")
+  if (typeof value !== "string") return "";
+  return value
     .replace(/<br\s*\/?\s*>/gi, " ")
     .replace(/^[-–—:;,\s]+/, "")
     .replace(/\s+/g, " ")
@@ -9276,14 +9396,19 @@ function SAL_cleanArcItem(value) {
 }
 
 function SAL_extractArcResult(text) {
-  let raw = String(text || "")
+  if (typeof text !== "string" || text.length > SAL_MAX_GENERATED_CHARS) {
+    return { count: 0, numbered: "" };
+  }
+  let raw = text
     .replace(/\r/g, "")
     .replace(/<br\s*\/?\s*>/gi, "\n")
     .trim();
   raw = raw.replace(/^```[A-Za-z0-9_-]*\s*/i, "").replace(/\s*```$/i, "").trim();
 
+  const usable = items => items.map(SAL_cleanArcItem)
+    .filter(item => item && item.length <= SAL_MAX_ITEM_CHARS).slice(0, 8);
   const makeResult = (items) => {
-    const clean = items.map(SAL_cleanArcItem).filter(Boolean).slice(0, 8);
+    const clean = usable(items);
     if (clean.length < SAL_MIN_ARC_ITEMS) return null;
     return {
       count: clean.length,
@@ -9304,7 +9429,7 @@ function SAL_extractArcResult(text) {
     try {
       const parsed = JSON.parse(candidate);
       if (Array.isArray(parsed)) {
-        const clean = parsed.map(SAL_cleanArcItem).filter(Boolean);
+        const clean = usable(parsed);
         bestCount = Math.max(bestCount, Math.min(8, clean.length));
         const result = makeResult(clean);
         if (result) return result;
@@ -9314,7 +9439,7 @@ function SAL_extractArcResult(text) {
 
   const numberedRaw = raw
     .replace(/\[\s*([1-8])\s*\]/g, "$1.")
-    .replace(/\b(?:option|possibility|beat|idea)\s*#?\s*([1-8])\s*(?=[:.)\-–—])/gi, "$1");
+    .replace(/\b(?:option|possibility|beat|idea)[ \t]*#?[ \t]*([1-8])[ \t]*(?=[:.)\-–—])/gi, "$1");
   const markerRegex = /(^|[\n\r]|\s)(?:[-*•]\s*)?(?:\*\*)?(?:#\s*)?([1-8])\s*(?:[.)\:：\-–—])(?:\*\*)?\s*/g;
   const markers = [];
   let match;
@@ -9336,28 +9461,28 @@ function SAL_extractArcResult(text) {
     }
 
     if (sequence.length > bestSequence.length) bestSequence = sequence.slice();
-    bestCount = Math.max(bestCount, Math.min(8, sequence.length));
     if (bestSequence.length >= 8) break;
   }
 
-  if (bestSequence.length >= SAL_MIN_ARC_ITEMS) {
-    const items = bestSequence.map((marker, index) => {
+  if (bestSequence.length) {
+    const items = usable(bestSequence.map((marker, index) => {
       const end = index < bestSequence.length - 1
         ? bestSequence[index + 1].markerStart
         : numberedRaw.length;
       return SAL_cleanArcItem(numberedRaw.slice(marker.bodyStart, end));
-    }).filter(Boolean);
+    }));
+    bestCount = Math.max(bestCount, items.length);
     const result = makeResult(items);
     if (result) return result;
   }
 
   const lines = raw.split("\n").map(line => line.trim()).filter(Boolean);
 
-  const bullets = lines
+  const bullets = usable(lines
     .map(line => line.match(/^[-*•]\s+(.+)/))
     .filter(Boolean)
     .map(match => SAL_cleanArcItem(match[1]))
-    .filter(Boolean);
+    .filter(Boolean));
   bestCount = Math.max(bestCount, Math.min(8, bullets.length));
   const bulletResult = makeResult(bullets);
   if (bulletResult) return bulletResult;
@@ -9383,6 +9508,7 @@ function SAL_extractNumberedArc(text) {
 function SAL_removeFirstArcItem() {
   const s = SAL_state();
   if (!s.arc.trim()) return;
+  const previousArc = s.arc;
 
   const numbered = s.arc
     .split("\n")
@@ -9397,7 +9523,7 @@ function SAL_removeFirstArcItem() {
     ? SAL_softArcText(numbered.map((item, index) => `${index + 1}. ${item}`).join("\n"))
     : "";
 
-  SAL_saveArc();
+  return SAL_saveArc(previousArc);
 }
 
 function SAL_scheduleIfDue() {
@@ -9406,7 +9532,7 @@ function SAL_scheduleIfDue() {
   if (s.turn < s.nextArcTurn) return false;
 
   s.pendingGeneration = true;
-  s.captureGeneration = true;
+  s.captureGeneration = false;
   s.generationReason = "auto";
   s.attempt = 0;
   return true;
@@ -9425,6 +9551,8 @@ function SAL_protectPlayerInput(inputText) {
   const realInput = SAL_isRealPlayerInput(inputText);
   const command = SAL_isCommand(inputText);
   s.realPlayerInputThisTurn = realInput;
+  // Match upstream command detection; explicit Auto-Cards commands must run.
+  s.autoCardsCommandThisTurn = /\/\s*A\s*C/i.test(String(inputText || ""));
   s.innerSelfTaskActive = false;
 
   if (!realInput) {
@@ -9432,7 +9560,7 @@ function SAL_protectPlayerInput(inputText) {
     // SAL commands must never accidentally restart it.
     if (!command && s.deferred && s.enabled && !SAL_isBusy()) {
       s.pendingGeneration = true;
-      s.captureGeneration = true;
+      s.captureGeneration = false;
       s.generationReason = "auto";
       s.deferred = false;
     }
@@ -9447,7 +9575,7 @@ function SAL_protectPlayerInput(inputText) {
     s.generationReason = "auto";
   }
 
-  if (SAL_hasInnerSelfTask()) {
+  if (state.InnerSelf && SAL_hasInnerSelfTask()) {
     state.InnerSelf.agent = "";
   }
 }
@@ -9455,8 +9583,10 @@ function SAL_protectPlayerInput(inputText) {
 function SAL_queueDisplayCommand(message) {
   const s = SAL_state();
   s.commandPending = true;
-  s.commandResponse = String(message || "SAL command completed.");
-  SAL_rememberUtilityOutput(s.commandResponse);
+  // Delimited output can be removed from future context without storing six
+  // full copies of status + arc in persistent state.
+  s.commandResponse = "<<SAL UTILITY RESPONSE>>\n" +
+    String(message || "SAL command completed.") + "\n<<END SAL UTILITY RESPONSE>>";
   s.realPlayerInputThisTurn = false;
   s.innerSelfTaskActive = false;
   // Phoenix currently errors on empty Input text and on stop:true. A zero-width
@@ -9487,7 +9617,7 @@ function SAL_inputCommands(inputText) {
     s.commandPending = false;
     s.commandResponse = "";
     s.pendingGeneration = true;
-    s.captureGeneration = true;
+    s.captureGeneration = false;
     s.generationReason = "manual";
     s.deferred = false;
     s.attempt = 0;
@@ -9502,6 +9632,7 @@ function SAL_inputCommands(inputText) {
     s.generationReason = "";
     s.attempt = 0;
     s.pendingMessage = "";
+    if (wasPending) s.nextArcTurn = s.turn + s.turnsPerAICall;
     return SAL_queueDisplayCommand(
       wasPending
         ? "Story Arc Light generation stopped."
@@ -9515,16 +9646,34 @@ function SAL_inputCommands(inputText) {
 function SAL_generationContext(baseText) {
   const s = SAL_state();
   s.pendingGeneration = false;
-  s.captureGeneration = true;
+  s.captureGeneration = false;
+  const { maxChars } = SAL_contextLimits();
+  const reserve = Math.min(512, String(baseText || "").length);
+  if (maxChars && s.prompt.trim().length + 2 + reserve > maxChars) {
+    s.pendingGeneration = false;
+    s.captureGeneration = false;
+    s.deferred = false;
+    s.generationReason = "";
+    s.nextArcTurn = s.turn + s.turnsPerAICall;
+    s.lastPlanningPromptAttached = false;
+    s.lastPlanningContextTrimmed = true;
+    s.lastArcGenerationStatus = "not attempted (planning prompt exceeds context budget)";
+    SAL_queueDisplayCommand("SAL could not fit its planning prompt and story context. The existing arc was kept. Increase available context or shorten a customized planning prompt, then use /sal redo.");
+    const fallback = "Reply OK.".slice(0, maxChars);
+    s.lastPlanningContextLength = fallback.length;
+    return fallback;
+  }
   const result = SAL_appendContextBlock(baseText, s.prompt, true);
   s.lastPlanningContextLength = result.length;
-  s.lastPlanningPromptAttached = result.includes("STORY ARC LIGHT — PRIVATE PLANNING TASK");
+  s.lastPlanningPromptAttached = result.endsWith(s.prompt.trim());
+  s.captureGeneration = s.lastPlanningPromptAttached;
   return result;
 }
 
 function SAL_injectArc(baseText) {
   const s = SAL_state();
-  if (!s.enabled || !s.arc.trim()) return SAL_cleanContextNoise(baseText);
+  s.lastGuidanceSkipped = false;
+  if (!s.enabled || !s.arc.trim()) return SAL_appendContextBlock(baseText, "", false);
 
   const guidance = [
     "<<STORY ARC LIGHT — OPTIONAL GUIDANCE>>",
@@ -9532,33 +9681,15 @@ function SAL_injectArc(baseText) {
     "<<END STORY ARC LIGHT>>"
   ].join("\n");
 
-  // AI Dungeon puts the newest Do/Say/Story action near the end of context.
-  // Appending guidance after it can make the AI continue the earlier scene
-  // instead of acknowledging that action until the following Continue.
-  // First reserve room using our tested context trimmer, then move the
-  // optional planning block BEFORE Recent Story so player input stays last.
-  // Leave room for separators and (if old history was truncated) its heading.
-  const withRoom = SAL_appendContextBlock(baseText, guidance, false, 32);
-  const appended = "\n\n" + guidance;
-  if (!withRoom.endsWith(appended)) return withRoom;
-
-  const base = withRoom.slice(0, -appended.length);
-  const recentAt = base.lastIndexOf("\nRecent Story:");
-  const position = recentAt >= 0
-    ? recentAt + 1
-    : Math.min(SAL_contextLimits().memoryLength, base.length);
-
-  const beforeHistory = base.slice(0, position).trimEnd();
-  const recentHistory = base.slice(position).trimStart();
-  // The context trimmer keeps the newest actions but can cut off the
-  // "Recent Story:" label alongside old history. Restore only the label.
-  const hadRecentHeading = /(^|\n)Recent Story:/.test(String(baseText || ""));
-  const historyWithHeading = recentAt < 0 && hadRecentHeading
-    ? "Recent Story:\n" + recentHistory
-    : recentHistory;
-
-  return (beforeHistory ? beforeHistory + "\n\n" : "")
-    + guidance + (historyWithHeading ? "\n\n" + historyWithHeading : "");
+  const { maxChars } = SAL_contextLimits();
+  // Optional guidance must not crowd out the story or a player's explicit choice.
+  if (maxChars && guidance.length + 34 > maxChars / 2) {
+    s.lastGuidanceSkipped = true;
+    return SAL_appendContextBlock(baseText, "", false);
+  }
+  // Keep optional possibilities before Recent Story, including on NPC
+  // thought-and-story turns. The player's newest action remains in history.
+  return SAL_appendContextBlock(baseText, guidance, false, 32, true);
 }
 
 function SAL_processGeneratedOutput(outputText) {
@@ -9575,7 +9706,20 @@ function SAL_processGeneratedOutput(outputText) {
   s.lastArcRecognizedItems = parsed.count;
 
   if (numbered && parsed.count >= SAL_MIN_ARC_ITEMS) {
+    const previousArc = s.arc;
     s.arc = SAL_softArcText(numbered);
+
+    if (!SAL_saveArc(previousArc)) {
+      s.pendingGeneration = false;
+      s.captureGeneration = false;
+      s.attempt = 0;
+      s.deferred = false;
+      s.generationReason = "";
+      s.nextArcTurn = s.turn + s.turnsPerAICall;
+      s.lastArcGenerationStatus = "parsed arc but Story Card save failed; previous arc kept";
+      return `<< ⚠ SAL skipped: card could not be saved; old arc kept. >>`;
+    }
+
     s.pendingGeneration = false;
     s.captureGeneration = false;
     s.attempt = 0;
@@ -9586,7 +9730,6 @@ function SAL_processGeneratedOutput(outputText) {
     s.arcStartItems = parsed.count;
     s.arcBeatsRemoved = 0;
     s.lastArcGenerationStatus = `success (${parsed.count} possibilities)`;
-    SAL_saveArc();
     return `<< ✓ SAL updated (${parsed.count}/8). >>`;
   }
 
@@ -9606,7 +9749,7 @@ function SAL_processGeneratedOutput(outputText) {
   : `no arc saved (${parsed.count}/8 recognized; minimum ${SAL_MIN_ARC_ITEMS})`;
 
   try {
-    log(`SAL arc parse below minimum: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
+    if (s.debug) log(`SAL arc rejected: recognized ${parsed.count}/8 items. Raw model output: ` + String(outputText || "").slice(0, 1600));
   } catch (_) {}
 
   return hadArc
@@ -9628,26 +9771,28 @@ function SAL_beatInterval() {
 
 function SAL_onNormalOutput(outputText) {
   const s = SAL_state();
+  s.realPlayerInputThisTurn = false;
+  s.innerSelfTaskActive = false;
+  // Inner Self may return only encoded thought labels or a utility guide.
+  const visible = String(outputText || "").replace(/[\u200B-\u200D]/g, "").trim();
+  if (!visible || (visible.startsWith(">>>") && visible.endsWith("<<<"))) return outputText;
   s.turn += 1;
 
   const removalInterval = SAL_beatInterval();
-  if (removalInterval > 0 && s.arc.trim()) {
+  if (s.enabled && removalInterval > 0 && s.arc.trim()) {
     if (s.arcSavedTurn >= 0) {
-      // Start from the arc's save turn, not global turn multiples.
+      // A failed card write must not advance the beat-removal clock.
       if (s.turn - s.arcSavedTurn >= removalInterval * (s.arcBeatsRemoved + 1)) {
-        SAL_removeFirstArcItem();
-        s.arcBeatsRemoved += 1;
+        if (SAL_removeFirstArcItem()) s.arcBeatsRemoved += 1;
       }
     } else if (s.turn >= removalInterval && s.turn % removalInterval === 0) {
-      // Existing adventures retain old pacing until their next new arc.
       SAL_removeFirstArcItem();
     }
   }
 
   const scheduled = SAL_scheduleIfDue();
-  s.realPlayerInputThisTurn = false;
-  s.innerSelfTaskActive = false;
-  SAL_saveSettings();
+  // Leave the editable settings card intact, including comments and mistakes
+  // the user may still be correcting. /sal status shows effective values.
 
   if (scheduled) {
     return String(outputText || "") +
@@ -9664,10 +9809,13 @@ function SAL_statusText() {
     `Story Arc Light ${SAL_VERSION}`,
     `Enabled: ${s.enabled ? "yes" : "no"}`,
     `Story turns: ${s.turn}`,
+    `Debug logging: ${s.debug ? "on" : "off"}`,
+    ...(s.lastError ? [`Last script error: ${s.lastError}`] : []),
+    ...(s.settingsWarning ? [`Settings warning: ${s.settingsWarning}`] : []),
     `Initial observation period: ${SAL_INITIAL_WAIT_TURNS} story turns`,
     `Story Arc exists: ${hasArc ? "yes" : "no"}`,
     `Story Arc card sync: ${s.lastCardSyncStatus}`,
-    `Refresh every: ${s.turnsPerAICall} story turns after a saved arc`,
+    `Refresh every: ${s.turnsPerAICall} story turns after a planning attempt`,
     hasArc
       ? `Next automatic refresh: story turn ${s.nextArcTurn}`
       : `First automatic arc check: story turn ${s.nextArcTurn}`,
@@ -9677,6 +9825,7 @@ function SAL_statusText() {
     `Inner Self detected: ${SAL_hasInnerSelf() ? "yes" : "no"}`,
     `Minimum usable arc: ${SAL_MIN_ARC_ITEMS} possibilities`,
     `Last arc generation: ${s.lastArcGenerationStatus}`,
+    `Optional guidance omitted for lack of space: ${s.lastGuidanceSkipped ? "yes" : "no"}`,
     `Last planning context trimmed to fit: ${s.lastPlanningContextTrimmed ? "yes" : "no"}`,
     `Planning prompt attached: ${s.lastPlanningPromptAttached ? "yes" : "no"}`,
     `Last planning context length: ${s.lastPlanningContextLength} chars`,
