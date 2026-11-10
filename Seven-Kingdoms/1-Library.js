@@ -240,7 +240,10 @@ function IS_SevenKingdomsNPCNames(cards, playerName) {
         "guard", "guards", "farmer", "farmers", "merchant", "merchants",
         "villager", "villagers", "stranger", "strangers", "adventurer",
         "guild", "guildmaster", "questgiver", "receptionist", "monster",
-        "soldier", "bandit", "creature", "citizen", "travelers", "traveler"
+        "soldier", "bandit", "creature", "citizen", "travelers", "traveler",
+        "village", "town", "city", "local", "royal", "imperial", "old",
+        "young", "wandering", "traveling", "travelling", "generic",
+        "northern", "southern", "eastern", "western", "elder", "veteran"
     ]);
     const ambiguous = new Set([
         "may", "will", "rose", "hope", "faith", "grace", "summer",
